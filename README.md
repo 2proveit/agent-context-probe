@@ -17,6 +17,7 @@ Claude Code Proxy serves three main purposes:
 - **Transparent Proxy**: Routes Claude Code requests through the monitor without disruption
 - **Agent Routing (Optional)**: Map specific Claude Code agents to different LLM models
 - **Request Monitoring**: SQLite-based logging of all API interactions
+- **OpenAI Protocols**: Transparent `/v1/chat/completions` and `/v1/responses` forwarding
 - **Live Dashboard**: Real-time visualization of requests and responses
 - **Conversation Analysis**: View full conversation threads with tool usage
 - **Easy Setup**: One-command startup for both services
@@ -177,10 +178,24 @@ providers:
     
   openai: # if enabling subagent routing
     api_key: "your-openai-key"  # Or set OPENAI_API_KEY env var
+    base_url: "https://api.openai.com/v1"
 
 storage:
   db_path: "requests.db"
+  max_capture_bytes: 10485760
+
+web:
+  show_raw_stream_events: false
 ```
+
+`providers.openai.base_url` is an API prefix. The proxy appends
+`/chat/completions` or `/responses` while preserving any gateway path prefix.
+Streaming events are stored as raw SSE and as a structured result only after a
+valid terminal event is received.
+
+> **Security:** Request and response headers are stored and displayed exactly
+> as received, including authorization and cookie headers. Protect access to
+> both the dashboard and `requests.db`.
 
 ### Subagent Configuration (Optional)
 

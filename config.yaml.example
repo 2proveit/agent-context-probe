@@ -36,15 +36,25 @@ providers:
     
     # Base URL for OpenAI API (can be changed for custom endpoints)
     # Can also be set via OPENAI_BASE_URL environment variable
-    # base_url: "https://api.openai.com"
+    # This is an API prefix; the proxy appends /chat/completions or /responses.
+    # base_url: "https://api.openai.com/v1"
 
 # Storage configuration
 storage:
   # SQLite database path for storing request history
   db_path: "requests.db"
+
+  # Maximum request/response bytes retained in the database.
+  # The proxied exchange is not truncated. Set to 0 for unlimited capture.
+  max_capture_bytes: 10485760
   
   # Directory for storing request files (if needed in future)
   # requests_dir: "./requests"
+
+# Web interface configuration
+web:
+  # Store raw SSE data but hide its viewer unless explicitly enabled.
+  show_raw_stream_events: false
 
 # Subagent Configuration (Optional)
 # Enable this feature if you want to route specific Claude Code agents to different LLM providers

@@ -14,6 +14,17 @@ interface ContentItem {
   input?: Record<string, any>;
   tool_call_id?: string;
   is_error?: boolean;
+  image_url?: string | { url?: string };
+  file_id?: string;
+  filename?: string;
+  arguments?: string;
+  data?: string;
+  media_type?: string;
+  source?: {
+    type: string;
+    media_type: string;
+    data: string;
+  };
 }
 
 interface MessageContentProps {
@@ -53,6 +64,9 @@ export function MessageContent({ content }: MessageContentProps) {
   if (content && typeof content === 'object') {
     switch (content.type) {
       case 'text':
+      case 'input_text':
+      case 'output_text':
+      case 'reasoning_text':
         // Check if this text contains tool definitions
         if (content.text && content.text.includes('<functions>')) {
           return <ToolDefinitions text={content.text} />;
@@ -91,6 +105,46 @@ export function MessageContent({ content }: MessageContentProps) {
 
       case 'image':
         return <ImageContent content={content} />;
+
+      case 'image_url':
+      case 'input_image': {
+        const imageReference = typeof content.image_url === 'string'
+          ? content.image_url
+          : content.image_url?.url;
+        return (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-blue-700">Image input</div>
+            <div className="text-xs text-blue-600 mt-1 break-all">
+              {imageReference?.startsWith('data:')
+                ? `Embedded data URL (${imageReference.length.toLocaleString()} characters)`
+                : imageReference || content.file_id || 'No image reference'}
+            </div>
+          </div>
+        );
+      }
+
+      case 'input_file':
+        return (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-indigo-700">File input</div>
+            <div className="text-xs text-indigo-600 mt-1">
+              {content.filename || content.file_id || 'Embedded file'}
+            </div>
+          </div>
+        );
+
+      case 'function_call':
+      case 'function_call_output':
+        return (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-purple-700">
+              {content.name || content.type}
+            </div>
+            <pre className="mt-2 text-xs overflow-x-auto bg-white rounded p-3 border border-purple-200">
+              {JSON.stringify(content, null, 2)}
+            </pre>
+          </div>
+        );
 
       default:
         return (

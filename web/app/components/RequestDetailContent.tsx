@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   ChevronDown, 
   Info, 
@@ -22,7 +22,12 @@ import {
 } from 'lucide-react';
 import { MessageContent } from './MessageContent';
 import { formatJSON } from '../utils/formatters';
-import { getChatCompletionsEndpoint, getProviderName } from '../utils/models';
+import {
+  getAPIProtocol,
+  getProviderName,
+  getProtocolBadgeClasses,
+  getUsage,
+} from '../utils/models';
 
 interface Request {
   id: number;
@@ -33,10 +38,13 @@ interface Request {
   originalModel?: string;
   routedModel?: string;
   body?: {
+    [key: string]: any;
     model?: string;
     messages?: Array<{
       role: string;
       content: any;
+      tool_calls?: any[];
+      tool_call_id?: string;
     }>;
     system?: Array<{
       text: string;
@@ -53,8 +61,11 @@ interface Request {
       };
     }>;
     max_tokens?: number;
+    max_output_tokens?: number;
     temperature?: number;
     stream?: boolean;
+    instructions?: any;
+    input?: any;
   };
   response?: {
     statusCode: number;
@@ -65,6 +76,10 @@ interface Request {
     streamingChunks?: string[];
     isStreaming: boolean;
     completedAt: string;
+    truncated?: boolean;
+    capturedBytes?: number;
+    responseBytes?: number;
+    streamError?: string;
   };
   promptGrade?: {
     score: number;
@@ -83,9 +98,20 @@ interface RequestDetailContentProps {
 export default function RequestDetailContent({ request, onGrade }: RequestDetailContentProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     overview: true,
-    // conversation: true
+    conversation: true,
   });
   const [copied, setCopied] = useState<Record<string, boolean>>({});
+  const [showRawStreamEvents, setShowRawStreamEvents] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/ui-config')
+      .then(response => response.ok ? response.json() : null)
+      .then(config => setShowRawStreamEvents(Boolean(config?.showRawStreamEvents)))
+      .catch(() => setShowRawStreamEvents(false));
+  }, []);
+
+  const protocol = getAPIProtocol(request.endpoint);
+  const conversationItems = normalizeRequestMessages(request.body);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({
@@ -153,8 +179,11 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
             <div className="flex items-center space-x-3">
               <span className="text-gray-500 font-medium min-w-[80px]">Endpoint:</span>
               <code className="text-blue-600 bg-blue-50 px-2 py-1 rounded font-mono text-xs border border-blue-200">
-                {getChatCompletionsEndpoint(request.routedModel, request.endpoint)}
+                {request.endpoint}
               </code>
+              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getProtocolBadgeClasses(request.endpoint)}`}>
+                {protocol}
+              </span>
             </div>
           </div>
           <div className="space-y-3">
@@ -214,7 +243,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
       {request.body && (
         <>
           {/* System Messages */}
-          {request.body.system && (
+          {(request.body.system || request.body.instructions) && (
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
               <div 
                 className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
@@ -225,7 +254,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                     <Cpu className="w-5 h-5 text-yellow-600" />
                     <span>System Instructions</span>
                     <span className="text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded-full border border-yellow-200">
-                      {request.body.system.length} items
+                      {request.body.system?.length || 1} items
                     </span>
                   </h4>
                   <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
@@ -235,7 +264,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
               </div>
               {expandedSections.system && (
                 <div className="p-6 space-y-4">
-                  {request.body.system.map((sys, index) => (
+                  {(request.body.system || [{ text: request.body.instructions, type: 'instructions' }]).map((sys: any, index: number) => (
                     <div key={index} className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-yellow-700 font-medium text-sm">System Message #{index + 1}</span>
@@ -286,7 +315,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
           )}
 
           {/* Conversation */}
-          {request.body.messages && (
+          {conversationItems.length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
               <div 
                 className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
@@ -297,7 +326,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                     <MessageCircle className="w-5 h-5 text-blue-600" />
                     <span>Conversation</span>
                     <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-200">
-                      {request.body.messages.length} messages
+                      {conversationItems.length} items
                     </span>
                   </h4>
                   <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
@@ -307,7 +336,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
               </div>
               {expandedSections.conversation && (
                 <div className="p-6 space-y-4 max-h-[600px] overflow-y-auto">
-                  {request.body.messages.map((message, index) => (
+                  {conversationItems.map((message, index) => (
                     <MessageBubble key={index} message={message} index={index} />
                   ))}
                 </div>
@@ -353,14 +382,14 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                             {request.routedModel}
                           </code>
                           <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full border border-blue-200">
-                            {getProviderName(request.routedModel)}
+                            {getProviderName(request.routedModel, request.endpoint)}
                           </span>
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500 mb-1">Target Endpoint</div>
                         <code className="text-xs bg-white px-2 py-1 rounded font-mono border border-gray-200">
-                          {getChatCompletionsEndpoint(request.routedModel)}
+                          {request.endpoint}
                         </code>
                       </div>
                     </div>
@@ -378,7 +407,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                     <div className="text-xs text-gray-500 mb-1">Max Tokens</div>
                     <div className="text-sm font-medium text-gray-900">
-                      {request.body.max_tokens?.toLocaleString() || 'N/A'}
+                      {(request.body.max_tokens ?? request.body.max_output_tokens)?.toLocaleString() || 'N/A'}
                     </div>
                   </div>
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
@@ -395,12 +424,40 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
               </div>
             )}
           </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            <div
+              className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+              onClick={() => toggleSection('rawRequest')}
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
+                  <FileText className="w-5 h-5 text-gray-600" />
+                  <span>Raw Request JSON</span>
+                </h4>
+                <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                  expandedSections.rawRequest ? 'rotate-180' : ''
+                }`} />
+              </div>
+            </div>
+            {expandedSections.rawRequest && (
+              <div className="p-6">
+                <pre className="text-xs text-gray-700 overflow-auto max-h-96 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  {formatJSON(request.body)}
+                </pre>
+              </div>
+            )}
+          </div>
         </>
       )}
 
       {/* API Response */}
       {request.response && (
-        <ResponseDetails response={request.response} />
+        <ResponseDetails
+          response={request.response}
+          endpoint={request.endpoint}
+          showRawStreamEvents={showRawStreamEvents}
+        />
       )}
 
       {/* Prompt Grading Results */}
@@ -409,6 +466,39 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
       )}
     </div>
   );
+}
+
+function normalizeRequestMessages(body?: Request['body']): Array<{ role: string; content: any }> {
+  if (!body) return [];
+  if (Array.isArray(body.messages)) {
+    return body.messages.map(message => ({
+      role: message.role,
+      content: message.tool_calls?.length
+        ? [
+            ...(message.content ? [{ type: 'text', text: message.content }] : []),
+            ...message.tool_calls.map((toolCall: any) => ({
+              type: 'function_call',
+              ...toolCall,
+            })),
+          ]
+        : message.content,
+    }));
+  }
+  if (typeof body.input === 'string') {
+    return [{ role: 'user', content: body.input }];
+  }
+  if (!Array.isArray(body.input)) return [];
+
+  return body.input.map((item: any) => {
+    if (item?.role) return { role: item.role, content: item.content };
+    if (item?.type === 'function_call_output') {
+      return { role: 'tool', content: item };
+    }
+    if (item?.type === 'function_call') {
+      return { role: 'assistant', content: item };
+    }
+    return { role: item?.role || item?.type || 'input', content: item };
+  });
 }
 
 // Message bubble component
@@ -472,10 +562,16 @@ function PromptGradingResults({ promptGrade }: { promptGrade: any }) {
 }
 
 // Response Details Component
-function ResponseDetails({ response }: { response: NonNullable<Request['response']> }) {
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    overview: true
-  });
+function ResponseDetails({
+  response,
+  endpoint,
+  showRawStreamEvents,
+}: {
+  response: NonNullable<Request['response']>;
+  endpoint: string;
+  showRawStreamEvents: boolean;
+}) {
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<Record<string, boolean>>({});
 
   const toggleSection = (section: string) => {
@@ -587,6 +683,7 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
 
   const statusColors = getStatusColor(response.statusCode);
   const completedAt = response.completedAt ? new Date(response.completedAt).toLocaleString() : 'Unknown';
+  const usage = getUsage(response.body);
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm border-l-4 border-l-blue-500">
@@ -601,6 +698,16 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
             <span className={`text-xs px-2 py-1 rounded-full border ${statusColors.bg} ${statusColors.text} ${statusColors.border}`}>
               {response.statusCode}
             </span>
+            {response.streamError && (
+              <span className="text-xs px-2 py-1 rounded-full border bg-red-50 text-red-700 border-red-200">
+                {response.streamError}
+              </span>
+            )}
+            {response.truncated && (
+              <span className="text-xs px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                Log truncated
+              </span>
+            )}
           </h4>
           <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
             expandedSections.overview ? 'rotate-180' : ''
@@ -660,7 +767,7 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
           </div>
 
           {/* Token Usage */}
-          {response.body?.usage && (
+          {usage && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                 <div className="flex items-center space-x-2 mb-2">
@@ -668,7 +775,7 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
                   <span className="text-xs font-medium text-indigo-700">Input Tokens</span>
                 </div>
                 <div className="text-lg font-bold text-indigo-700">
-                  {response.body.usage.input_tokens?.toLocaleString() || '0'}
+                  {usage.input.toLocaleString()}
                 </div>
                 <div className="text-xs text-indigo-700 opacity-75">Prompt</div>
               </div>
@@ -679,7 +786,7 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
                   <span className="text-xs font-medium text-emerald-700">Output Tokens</span>
                 </div>
                 <div className="text-lg font-bold text-emerald-700">
-                  {response.body.usage.output_tokens?.toLocaleString() || '0'}
+                  {usage.output.toLocaleString()}
                 </div>
                 <div className="text-xs text-emerald-700 opacity-75">Response</div>
               </div>
@@ -690,24 +797,28 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
                   <span className="text-xs font-medium text-amber-700">Total Tokens</span>
                 </div>
                 <div className="text-lg font-bold text-amber-700">
-                  {((response.body.usage.input_tokens || 0) + (response.body.usage.output_tokens || 0)).toLocaleString()}
+                  {usage.total.toLocaleString()}
                 </div>
                 <div className="text-xs text-amber-700 opacity-75">Combined</div>
               </div>
               
-              {response.body.usage.cache_read_input_tokens && (
+              {usage.cached > 0 && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <div className="flex items-center space-x-2 mb-2">
                     <Bot className="w-4 h-4 text-green-600" />
                     <span className="text-xs font-medium text-green-700">Cached Tokens</span>
                   </div>
                   <div className="text-lg font-bold text-green-700">
-                    {response.body.usage.cache_read_input_tokens.toLocaleString()}
+                    {usage.cached.toLocaleString()}
                   </div>
                   <div className="text-xs text-green-700 opacity-75">From Cache</div>
                 </div>
               )}
             </div>
+          )}
+
+          {response.body && (
+            <SemanticResponse body={response.body} endpoint={endpoint} />
           )}
 
           {/* Response Headers */}
@@ -757,7 +868,7 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
           )}
 
           {/* Response Body */}
-          {(response.body || response.bodyText) && (
+          {(response.body || (!response.isStreaming && response.bodyText)) && (
             <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
               <div 
                 className="px-4 py-3 border-b border-gray-200 cursor-pointer"
@@ -806,7 +917,31 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
           )}
 
           {/* Streaming Response */}
-          {response.isStreaming && response.streamingChunks && response.streamingChunks.length > 0 && (() => {
+          {showRawStreamEvents && response.isStreaming && response.bodyText && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+              <div
+                className="px-4 py-3 border-b border-gray-200 cursor-pointer"
+                onClick={() => toggleSection('rawSSE')}
+              >
+                <div className="flex items-center justify-between">
+                  <h5 className="text-sm font-semibold text-gray-900 flex items-center space-x-2">
+                    <Wifi className="w-4 h-4 text-gray-600" />
+                    <span>Raw SSE Events</span>
+                  </h5>
+                  <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${
+                    expandedSections.rawSSE ? 'rotate-180' : ''
+                  }`} />
+                </div>
+              </div>
+              {expandedSections.rawSSE && (
+                <pre className="m-4 text-xs text-gray-600 overflow-auto max-h-96 bg-gray-100 rounded p-3 font-mono">
+                  {response.bodyText}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {showRawStreamEvents && response.isStreaming && response.streamingChunks && response.streamingChunks.length > 0 && (() => {
             const parsed = parseStreamingResponse(response.streamingChunks);
             return (
               <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
@@ -919,14 +1054,89 @@ function ResponseDetails({ response }: { response: NonNullable<Request['response
   );
 }
 
+function SemanticResponse({ body, endpoint }: { body: any; endpoint: string }) {
+  const protocol = getAPIProtocol(endpoint);
+  const items: Array<{ title: string; content: any; reasoning?: boolean }> = [];
+
+  if (protocol === 'OpenAI Chat Completions') {
+    for (const choice of Array.isArray(body?.choices) ? body.choices : []) {
+      const message = choice?.message || {};
+      if (message.reasoning_content) {
+        items.push({
+          title: `Choice ${choice.index ?? 0} · Reasoning`,
+          content: message.reasoning_content,
+          reasoning: true,
+        });
+      }
+      if (message.content || message.refusal) {
+        items.push({
+          title: `Choice ${choice.index ?? 0} · Assistant · ${choice.finish_reason || 'complete'}`,
+          content: message.content || message.refusal,
+        });
+      }
+      for (const toolCall of Array.isArray(message.tool_calls) ? message.tool_calls : []) {
+        items.push({
+          title: `Tool Call · ${toolCall.function?.name || toolCall.id || 'unknown'}`,
+          content: toolCall,
+        });
+      }
+    }
+  } else if (protocol === 'OpenAI Responses') {
+    for (const [index, output] of (Array.isArray(body?.output) ? body.output : []).entries()) {
+      if (output?.type === 'message') {
+        for (const content of Array.isArray(output.content) ? output.content : []) {
+          items.push({
+            title: `Output ${index + 1} · ${content.type || 'message'}`,
+            content,
+            reasoning: content.type === 'reasoning_text',
+          });
+        }
+      } else if (output?.type === 'reasoning') {
+        items.push({ title: `Output ${index + 1} · Reasoning`, content: output, reasoning: true });
+      } else {
+        items.push({ title: `Output ${index + 1} · ${output?.type || 'item'}`, content: output });
+      }
+    }
+  } else {
+    for (const content of Array.isArray(body?.content) ? body.content : []) {
+      items.push({ title: content.type || 'Content', content });
+    }
+  }
+
+  if (body?.error) {
+    items.unshift({ title: 'Error', content: body.error });
+  }
+  if (items.length === 0) return null;
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+      <h5 className="text-sm font-semibold text-blue-900">Structured Output</h5>
+      {items.map((item, index) => item.reasoning ? (
+        <details key={index} className="bg-white border border-purple-200 rounded-lg p-3">
+          <summary className="cursor-pointer text-sm font-medium text-purple-700">{item.title}</summary>
+          <div className="mt-3"><MessageContent content={item.content} /></div>
+        </details>
+      ) : (
+        <div key={index} className="bg-white border border-blue-200 rounded-lg p-3">
+          <div className="text-xs font-semibold text-blue-700 mb-2">{item.title}</div>
+          <MessageContent content={item.content} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Tool Card Component
 function ToolCard({ tool, index }: { tool: any; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const [copiedSchema, setCopiedSchema] = useState(false);
+  const toolName = tool.name || tool.function?.name || tool.type || 'Unknown Tool';
+  const description = tool.description || tool.function?.description || '';
+  const schema = tool.input_schema || tool.parameters || tool.function?.parameters;
 
   const handleCopySchema = async () => {
     try {
-      await navigator.clipboard.writeText(formatJSON(tool.input_schema));
+      await navigator.clipboard.writeText(formatJSON(schema));
       setCopiedSchema(true);
       setTimeout(() => setCopiedSchema(false), 2000);
     } catch (error) {
@@ -955,8 +1165,8 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
     });
   };
 
-  const isLongDescription = tool.description.length > 300;
-  const displayDescription = expanded ? tool.description : tool.description.slice(0, 300);
+  const isLongDescription = description.length > 300;
+  const displayDescription = expanded ? description : description.slice(0, 300);
 
   return (
     <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
@@ -967,7 +1177,7 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
               <Wrench className="w-5 h-5 text-gray-600" />
             </div>
             <div>
-              <h5 className="text-lg font-bold text-gray-900">{tool.name}</h5>
+              <h5 className="text-lg font-bold text-gray-900">{toolName}</h5>
               <span className="text-xs text-gray-500">Tool #{index + 1}</span>
             </div>
           </div>
@@ -990,7 +1200,7 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
           </div>
         </div>
         
-        {tool.input_schema && (
+        {schema && (
           <div className="mt-4">
             <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
               <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
@@ -1012,7 +1222,7 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
               </div>
               <div className="p-3">
                 <pre className="text-xs text-gray-700 overflow-x-auto font-mono">
-                  {formatJSON(tool.input_schema)}
+                  {formatJSON(schema)}
                 </pre>
               </div>
             </div>

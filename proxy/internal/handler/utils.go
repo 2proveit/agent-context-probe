@@ -11,44 +11,10 @@ import (
 	"github.com/seifghazi/claude-code-monitor/internal/model"
 )
 
-// SanitizeHeaders removes sensitive headers before logging/storage
-func SanitizeHeaders(headers http.Header) http.Header {
-	sanitized := make(http.Header)
-
-	sensitiveHeaders := []string{
-		"x-api-key",
-		"api-key",
-		"authorization",
-		"anthropic-api-key",
-		"openai-api-key",
-		"bearer",
-	}
-
-	for key, values := range headers {
-		lowerKey := strings.ToLower(key)
-		isSensitive := false
-
-		for _, sensitive := range sensitiveHeaders {
-			if strings.Contains(lowerKey, sensitive) {
-				isSensitive = true
-				break
-			}
-		}
-
-		if isSensitive {
-			// Calculate SHA256 hash for each sensitive header value
-			hashedValues := make([]string, len(values))
-			for i, value := range values {
-				hash := sha256.Sum256([]byte(value))
-				hashedValues[i] = fmt.Sprintf("sha256:%x", hash)
-			}
-			sanitized[key] = hashedValues
-		} else {
-			sanitized[key] = values
-		}
-	}
-
-	return sanitized
+// CaptureHeaders clones headers before logging/storage. Header values are
+// intentionally retained so the monitor can display the exact exchange.
+func CaptureHeaders(headers http.Header) http.Header {
+	return headers.Clone()
 }
 
 // ConversationDiffAnalyzer analyzes conversation flows to identify new vs repeated content

@@ -29,6 +29,7 @@ type RequestLog struct {
 	Timestamp     string              `json:"timestamp"`
 	Method        string              `json:"method"`
 	Endpoint      string              `json:"endpoint"`
+	Protocol      string              `json:"protocol,omitempty"`
 	Headers       map[string][]string `json:"headers"`
 	Body          interface{}         `json:"body"`
 	Model         string              `json:"model,omitempty"`
@@ -49,6 +50,10 @@ type ResponseLog struct {
 	StreamingChunks []string            `json:"streamingChunks,omitempty"`
 	IsStreaming     bool                `json:"isStreaming"`
 	CompletedAt     string              `json:"completedAt"`
+	Truncated       bool                `json:"truncated,omitempty"`
+	CapturedBytes   int64               `json:"capturedBytes,omitempty"`
+	ResponseBytes   int64               `json:"responseBytes,omitempty"`
+	StreamError     string              `json:"streamError,omitempty"`
 }
 
 type ChatMessage struct {

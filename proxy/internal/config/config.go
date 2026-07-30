@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,7 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Providers ProvidersConfig `yaml:"providers"`
 	Storage   StorageConfig   `yaml:"storage"`
+	Web       WebConfig       `yaml:"web"`
 	Subagents SubagentsConfig `yaml:"subagents"`
 	Anthropic AnthropicConfig
 }
@@ -56,8 +58,13 @@ type AnthropicConfig struct {
 }
 
 type StorageConfig struct {
-	RequestsDir string `yaml:"requests_dir"`
-	DBPath      string `yaml:"db_path"`
+	RequestsDir     string `yaml:"requests_dir"`
+	DBPath          string `yaml:"db_path"`
+	MaxCaptureBytes int64  `yaml:"max_capture_bytes"`
+}
+
+type WebConfig struct {
+	ShowRawStreamEvents bool `yaml:"show_raw_stream_events"`
 }
 
 type SubagentsConfig struct {
@@ -92,12 +99,13 @@ func Load() (*Config, error) {
 				MaxRetries: 3,
 			},
 			OpenAI: OpenAIProviderConfig{
-				BaseURL: "https://api.openai.com",
+				BaseURL: "https://api.openai.com/v1",
 				APIKey:  "",
 			},
 		},
 		Storage: StorageConfig{
-			DBPath: "requests.db",
+			DBPath:          "requests.db",
+			MaxCaptureBytes: 10 * 1024 * 1024,
 		},
 		Subagents: SubagentsConfig{
 			Enable:   false,
@@ -184,6 +192,10 @@ func Load() (*Config, error) {
 		}
 	}
 
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
 	// Sync legacy Anthropic config with new structure
 	cfg.Anthropic = AnthropicConfig{
 		BaseURL:    cfg.Providers.Anthropic.BaseURL,
@@ -192,6 +204,13 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) validate() error {
+	if c.Storage.MaxCaptureBytes < 0 {
+		return fmt.Errorf("storage.max_capture_bytes must be zero or greater")
+	}
+	return nil
 }
 
 func (c *Config) loadFromFile(path string) error {

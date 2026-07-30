@@ -23,8 +23,14 @@ import (
 	"github.com/seifghazi/claude-code-monitor/internal/service"
 )
 
-type openAIChatCompletionsForwarder interface {
+type openAIForwarder interface {
 	ForwardChatCompletions(context.Context, *http.Request) (*http.Response, error)
+	ForwardResponses(context.Context, *http.Request) (*http.Response, error)
+}
+
+type Options struct {
+	MaxCaptureBytes     int64
+	ShowRawStreamEvents bool
 }
 
 type Handler struct {
@@ -32,8 +38,9 @@ type Handler struct {
 	storageService      service.StorageService
 	conversationService service.ConversationService
 	modelRouter         *service.ModelRouter
-	openAIProvider      openAIChatCompletionsForwarder
+	openAIProvider      openAIForwarder
 	logger              *log.Logger
+	options             Options
 }
 
 func New(
@@ -41,7 +48,8 @@ func New(
 	storageService service.StorageService,
 	logger *log.Logger,
 	modelRouter *service.ModelRouter,
-	openAIProvider openAIChatCompletionsForwarder,
+	openAIProvider openAIForwarder,
+	options Options,
 ) *Handler {
 	conversationService := service.NewConversationService()
 
@@ -52,31 +60,59 @@ func New(
 		modelRouter:         modelRouter,
 		openAIProvider:      openAIProvider,
 		logger:              logger,
+		options:             options,
 	}
 }
 
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
+	h.handleOpenAIRequest(w, r, openAIProtocolChat, h.openAIProvider.ForwardChatCompletions)
+}
+
+func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
+	h.handleOpenAIRequest(w, r, openAIProtocolResponses, h.openAIProvider.ForwardResponses)
+}
+
+func (h *Handler) handleOpenAIRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	protocol string,
+	forward func(context.Context, *http.Request) (*http.Response, error),
+) {
 	bodyBytes := getBodyBytes(r)
 	if bodyBytes == nil {
-		writeErrorResponse(w, "Error reading request body", http.StatusBadRequest)
+		writeOpenAIError(w, "Error reading request body", "invalid_request_error", "request_body_unavailable", http.StatusBadRequest)
 		return
 	}
 
 	var requestBody map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &requestBody); err != nil {
-		writeErrorResponse(w, "Invalid JSON", http.StatusBadRequest)
+		writeOpenAIError(w, "Invalid JSON", "invalid_request_error", "invalid_json", http.StatusBadRequest)
 		return
 	}
 
 	modelName, _ := requestBody["model"].(string)
 	isStreaming, _ := requestBody["stream"].(bool)
+	storedBody := interface{}(requestBody)
+	if h.options.MaxCaptureBytes > 0 && int64(len(bodyBytes)) > h.options.MaxCaptureBytes {
+		storedBody = map[string]interface{}{
+			"model":  modelName,
+			"stream": isStreaming,
+			"_capture": map[string]interface{}{
+				"truncated":     true,
+				"capturedBytes": h.options.MaxCaptureBytes,
+				"requestBytes":  len(bodyBytes),
+				"preview":       string(bodyBytes[:h.options.MaxCaptureBytes]),
+			},
+		}
+	}
 	requestLog := &model.RequestLog{
 		RequestID:     generateRequestID(),
 		Timestamp:     time.Now().Format(time.RFC3339),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
-		Headers:       SanitizeHeaders(r.Header),
-		Body:          requestBody,
+		Protocol:      protocol,
+		Headers:       CaptureHeaders(r.Header),
+		Body:          storedBody,
 		Model:         modelName,
 		OriginalModel: modelName,
 		RoutedModel:   modelName,
@@ -88,11 +124,17 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-	resp, err := h.openAIProvider.ForwardChatCompletions(r.Context(), r)
+	resp, err := forward(r.Context(), r)
 	if err != nil {
-		h.logger.Printf("❌ Error forwarding OpenAI request: %v", err)
+		h.logger.Printf("❌ Error forwarding %s request: %v", protocol, err)
+		errorBody, _ := json.Marshal(openAIErrorPayload(
+			"Failed to connect to upstream",
+			"proxy_error",
+			"upstream_connection_failed",
+		))
 		requestLog.Response = &model.ResponseLog{
 			StatusCode:   http.StatusBadGateway,
+			Body:         errorBody,
 			ResponseTime: time.Since(startTime).Milliseconds(),
 			IsStreaming:  isStreaming,
 			CompletedAt:  time.Now().Format(time.RFC3339),
@@ -100,12 +142,12 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if updateErr := h.storageService.UpdateRequestWithResponse(requestLog); updateErr != nil {
 			h.logger.Printf("❌ Error updating failed OpenAI request: %v", updateErr)
 		}
-		writeErrorResponse(w, "Failed to forward request", http.StatusBadGateway)
+		writeOpenAIError(w, "Failed to connect to upstream", "proxy_error", "upstream_connection_failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	h.copyOpenAIResponse(w, resp, requestLog, startTime, isStreaming)
+	h.copyOpenAIResponse(w, resp, requestLog, startTime, isStreaming, protocol)
 }
 
 func (h *Handler) copyOpenAIResponse(
@@ -114,6 +156,7 @@ func (h *Handler) copyOpenAIResponse(
 	requestLog *model.RequestLog,
 	startTime time.Time,
 	isStreaming bool,
+	protocol string,
 ) {
 	for key, values := range resp.Header {
 		for _, value := range values {
@@ -123,13 +166,25 @@ func (h *Handler) copyOpenAIResponse(
 	w.WriteHeader(resp.StatusCode)
 
 	var captured bytes.Buffer
+	var responseBytes int64
+	var streamErr string
 	buffer := make([]byte, 32*1024)
 	for {
 		count, readErr := resp.Body.Read(buffer)
 		if count > 0 {
 			chunk := buffer[:count]
-			captured.Write(chunk)
+			responseBytes += int64(count)
+			if h.options.MaxCaptureBytes == 0 {
+				_, _ = captured.Write(chunk)
+			} else if remaining := h.options.MaxCaptureBytes - int64(captured.Len()); remaining > 0 {
+				captureCount := int64(count)
+				if captureCount > remaining {
+					captureCount = remaining
+				}
+				_, _ = captured.Write(chunk[:captureCount])
+			}
 			if _, writeErr := w.Write(chunk); writeErr != nil {
+				streamErr = "client connection closed while streaming the response"
 				break
 			}
 			if flusher, ok := w.(http.Flusher); ok {
@@ -141,21 +196,56 @@ func (h *Handler) copyOpenAIResponse(
 		}
 		if readErr != nil {
 			h.logger.Printf("❌ Error reading OpenAI upstream response: %v", readErr)
+			streamErr = "upstream response stream was interrupted"
 			break
 		}
 	}
 
-	requestLog.Response = &model.ResponseLog{
-		StatusCode:   resp.StatusCode,
-		Headers:      SanitizeHeaders(resp.Header),
-		BodyText:     captured.String(),
-		ResponseTime: time.Since(startTime).Milliseconds(),
-		IsStreaming:  isStreaming,
-		CompletedAt:  time.Now().Format(time.RFC3339),
+	truncated := responseBytes > int64(captured.Len())
+	responseLog := &model.ResponseLog{
+		StatusCode:    resp.StatusCode,
+		Headers:       CaptureHeaders(resp.Header),
+		ResponseTime:  time.Since(startTime).Milliseconds(),
+		IsStreaming:   isStreaming,
+		CompletedAt:   time.Now().Format(time.RFC3339),
+		Truncated:     truncated,
+		CapturedBytes: int64(captured.Len()),
+		ResponseBytes: responseBytes,
+		StreamError:   streamErr,
 	}
+
+	capturedBytes := captured.Bytes()
+	isEventStream := isStreaming && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
+	switch {
+	case isEventStream:
+		responseLog.BodyText = captured.String()
+		if truncated {
+			responseLog.StreamError = "response capture was truncated before it could be parsed"
+		} else if responseLog.StreamError == "" {
+			body, aggregateErr := aggregateOpenAIStream(protocol, capturedBytes)
+			if body != nil {
+				responseLog.Body = body
+			}
+			if aggregateErr != nil {
+				responseLog.StreamError = aggregateErr.Error()
+			}
+		}
+	case json.Valid(capturedBytes):
+		responseLog.Body = append(json.RawMessage(nil), capturedBytes...)
+	default:
+		responseLog.BodyText = captured.String()
+	}
+
+	requestLog.Response = responseLog
 	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
 		h.logger.Printf("❌ Error updating OpenAI request response: %v", err)
 	}
+}
+
+func (h *Handler) UIConfig(w http.ResponseWriter, _ *http.Request) {
+	writeJSONResponse(w, map[string]bool{
+		"showRawStreamEvents": h.options.ShowRawStreamEvents,
+	})
 }
 
 func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +281,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		Timestamp:     time.Now().Format(time.RFC3339),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
-		Headers:       SanitizeHeaders(r.Header),
+		Headers:       CaptureHeaders(r.Header),
 		Body:          req,
 		Model:         decision.OriginalModel,
 		OriginalModel: decision.OriginalModel,
@@ -302,6 +392,7 @@ func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 	for i, req := range allRequests {
 		if req != nil {
 			requests[i] = *req
+			enrichOpenAIRequestForDisplay(&requests[i])
 		}
 	}
 
@@ -328,6 +419,30 @@ func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 		Requests: requests,
 		Total:    total,
 	})
+}
+
+func enrichOpenAIRequestForDisplay(request *model.RequestLog) {
+	switch {
+	case strings.Contains(request.Endpoint, "/chat/completions"):
+		request.Protocol = openAIProtocolChat
+	case strings.Contains(request.Endpoint, "/responses"):
+		request.Protocol = openAIProtocolResponses
+	default:
+		return
+	}
+
+	response := request.Response
+	if response == nil || len(response.Body) > 0 || response.BodyText == "" || !response.IsStreaming {
+		return
+	}
+	body, err := aggregateOpenAIStream(request.Protocol, []byte(response.BodyText))
+	if err != nil {
+		if response.StreamError == "" {
+			response.StreamError = err.Error()
+		}
+		return
+	}
+	response.Body = body
 }
 
 func (h *Handler) DeleteRequests(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +479,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 
 		responseLog := &model.ResponseLog{
 			StatusCode:   resp.StatusCode,
-			Headers:      SanitizeHeaders(resp.Header),
+			Headers:      CaptureHeaders(resp.Header),
 			BodyText:     string(errorBytes),
 			ResponseTime: time.Since(startTime).Milliseconds(),
 			IsStreaming:  true,
@@ -482,7 +597,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 
 	responseLog := &model.ResponseLog{
 		StatusCode:      resp.StatusCode,
-		Headers:         SanitizeHeaders(resp.Header),
+		Headers:         CaptureHeaders(resp.Header),
 		StreamingChunks: streamingChunks,
 		ResponseTime:    time.Since(startTime).Milliseconds(),
 		IsStreaming:     true,
@@ -544,7 +659,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 
 	responseLog := &model.ResponseLog{
 		StatusCode:   resp.StatusCode,
-		Headers:      SanitizeHeaders(resp.Header),
+		Headers:      CaptureHeaders(resp.Header),
 		ResponseTime: time.Since(startTime).Milliseconds(),
 		IsStreaming:  false,
 		CompletedAt:  time.Now().Format(time.RFC3339),
@@ -617,6 +732,23 @@ func writeErrorResponse(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(&model.ErrorResponse{Error: message})
+}
+
+func openAIErrorPayload(message, errorType, code string) map[string]interface{} {
+	return map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    errorType,
+			"param":   nil,
+			"code":    code,
+		},
+	}
+}
+
+func writeOpenAIError(w http.ResponseWriter, message, errorType, code string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(openAIErrorPayload(message, errorType, code))
 }
 
 // extractTextFromMessage tries multiple strategies to extract text from a message

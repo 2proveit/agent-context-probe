@@ -46,7 +46,17 @@ func main() {
 	}
 	logger.Println("🗿 SQLite database ready")
 
-	h := handler.New(anthropicService, storageService, logger, modelRouter, openAIProvider)
+	h := handler.New(
+		anthropicService,
+		storageService,
+		logger,
+		modelRouter,
+		openAIProvider,
+		handler.Options{
+			MaxCaptureBytes:     cfg.Storage.MaxCaptureBytes,
+			ShowRawStreamEvents: cfg.Web.ShowRawStreamEvents,
+		},
+	)
 
 	r := mux.NewRouter()
 
@@ -59,6 +69,7 @@ func main() {
 	r.Use(middleware.Logging)
 
 	r.HandleFunc("/v1/chat/completions", h.ChatCompletions).Methods("POST")
+	r.HandleFunc("/v1/responses", h.Responses).Methods("POST")
 	r.HandleFunc("/v1/messages", h.Messages).Methods("POST")
 	r.HandleFunc("/v1/models", h.Models).Methods("GET")
 	r.HandleFunc("/health", h.Health).Methods("GET")
@@ -67,6 +78,7 @@ func main() {
 	r.HandleFunc("/ui", h.UI).Methods("GET")
 	r.HandleFunc("/api/requests", h.GetRequests).Methods("GET")
 	r.HandleFunc("/api/requests", h.DeleteRequests).Methods("DELETE")
+	r.HandleFunc("/api/ui-config", h.UIConfig).Methods("GET")
 	r.HandleFunc("/api/conversations", h.GetConversations).Methods("GET")
 	r.HandleFunc("/api/conversations/{id}", h.GetConversationByID).Methods("GET")
 	r.HandleFunc("/api/conversations/project", h.GetConversationsByProject).Methods("GET")
@@ -86,6 +98,7 @@ func main() {
 		logger.Printf("📡 API endpoints available at:")
 		logger.Printf("   - POST http://localhost:%s/v1/messages (Anthropic format)", cfg.Server.Port)
 		logger.Printf("   - POST http://localhost:%s/v1/chat/completions (OpenAI format)", cfg.Server.Port)
+		logger.Printf("   - POST http://localhost:%s/v1/responses (OpenAI Responses format)", cfg.Server.Port)
 		logger.Printf("   - GET  http://localhost:%s/v1/models", cfg.Server.Port)
 		logger.Printf("   - GET  http://localhost:%s/health", cfg.Server.Port)
 		logger.Printf("🎨 Web UI available at:")

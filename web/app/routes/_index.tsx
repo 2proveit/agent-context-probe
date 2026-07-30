@@ -34,7 +34,11 @@ import {
 
 import RequestDetailContent from "../components/RequestDetailContent";
 import { ConversationThread } from "../components/ConversationThread";
-import { getChatCompletionsEndpoint } from "../utils/models";
+import {
+  getAPIProtocol,
+  getProtocolBadgeClasses,
+  getUsage,
+} from "../utils/models";
 
 export const meta: MetaFunction = () => {
   return [
@@ -96,6 +100,8 @@ interface Request {
     streamingChunks?: string[];
     isStreaming: boolean;
     completedAt: string;
+    streamError?: string;
+    truncated?: boolean;
   };
   promptGrade?: {
     score: number;
@@ -689,6 +695,14 @@ export default function Index() {
                                 {request.response.statusCode}
                               </span>
                             )}
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getProtocolBadgeClasses(request.endpoint)}`}>
+                              {getAPIProtocol(request.endpoint)}
+                            </span>
+                            {request.body?.stream && (
+                              <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
+                                stream
+                              </span>
+                            )}
                             {request.conversationId && (
                               <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded font-medium">
                                 Turn {request.turnNumber}
@@ -698,22 +712,25 @@ export default function Index() {
                           
                           {/* Endpoint */}
                           <div className="text-xs text-gray-600 font-mono mb-1">
-                            {getChatCompletionsEndpoint(request.routedModel, request.endpoint)}
+                            {request.endpoint}
                           </div>
                           
                           {/* Metrics Row */}
                           <div className="flex items-center space-x-3 text-xs">
-                            {request.response?.body?.usage && (
+                            {getUsage(request.response?.body) && (
                               <>
                                 <span className="font-mono text-gray-600">
-                                  <span className="font-medium text-gray-900">{((request.response.body.usage.input_tokens || 0) + (request.response.body.usage.output_tokens || 0)).toLocaleString()}</span> tokens
+                                  <span className="font-medium text-gray-900">{getUsage(request.response?.body)!.total.toLocaleString()}</span> tokens
                                 </span>
-                                {request.response.body.usage.cache_read_input_tokens && (
+                                {getUsage(request.response?.body)!.cached > 0 && (
                                   <span className="font-mono bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
-                                    {request.response.body.usage.cache_read_input_tokens.toLocaleString()} cached
+                                    {getUsage(request.response?.body)!.cached.toLocaleString()} cached
                                   </span>
                                 )}
                               </>
+                            )}
+                            {request.response?.streamError && (
+                              <span className="font-mono text-red-600">interrupted</span>
                             )}
                             
                             {request.response?.responseTime && (

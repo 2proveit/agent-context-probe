@@ -32,6 +32,18 @@ func NewOpenAIProvider(cfg *config.OpenAIProviderConfig) *OpenAIProvider {
 }
 
 func (p *OpenAIProvider) ForwardChatCompletions(ctx context.Context, originalReq *http.Request) (*http.Response, error) {
+	return p.forwardOpenAIRequest(ctx, originalReq, "chat/completions")
+}
+
+func (p *OpenAIProvider) ForwardResponses(ctx context.Context, originalReq *http.Request) (*http.Response, error) {
+	return p.forwardOpenAIRequest(ctx, originalReq, "responses")
+}
+
+func (p *OpenAIProvider) forwardOpenAIRequest(
+	ctx context.Context,
+	originalReq *http.Request,
+	endpoint string,
+) (*http.Response, error) {
 	baseURL, err := url.Parse(p.config.BaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse base URL '%s': %w", p.config.BaseURL, err)
@@ -41,7 +53,7 @@ func (p *OpenAIProvider) ForwardChatCompletions(ctx context.Context, originalReq
 	proxyReq.RequestURI = ""
 	proxyReq.URL.Scheme = baseURL.Scheme
 	proxyReq.URL.Host = baseURL.Host
-	proxyReq.URL.Path = strings.TrimRight(baseURL.Path, "/") + "/chat/completions"
+	proxyReq.URL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + endpoint
 	proxyReq.Host = baseURL.Host
 
 	if p.config.APIKey != "" {
@@ -51,7 +63,7 @@ func (p *OpenAIProvider) ForwardChatCompletions(ctx context.Context, originalReq
 
 	resp, err := p.client.Do(proxyReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to forward chat completions request: %w", err)
+		return nil, fmt.Errorf("failed to forward OpenAI %s request: %w", endpoint, err)
 	}
 
 	return resp, nil
