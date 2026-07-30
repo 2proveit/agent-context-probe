@@ -14,17 +14,14 @@ import {
   Bot,
   User,
   Settings,
-  Zap,
   Users,
   Target,
   Cpu,
   MessageCircle,
-  Brain,
   CheckCircle,
   ClipboardCheck,
   BarChart3,
   MessageSquare,
-  Sparkles,
   Copy,
   Check,
   Lightbulb,
@@ -42,8 +39,8 @@ import {
 
 export const meta: MetaFunction = () => {
   return [
-    { title: "Claude Code Monitor" },
-    { name: "description", content: "Claude Code Monitor - Real-time API request visualization" },
+    { title: "API Request Monitor" },
+    { name: "description", content: "Real-time API request visualization" },
   ];
 };
 
@@ -153,7 +150,6 @@ export default function Index() {
   const [viewMode, setViewMode] = useState<"requests" | "conversations">("requests");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isConversationModalOpen, setIsConversationModalOpen] = useState(false);
-  const [modelFilter, setModelFilter] = useState<string>("all");
   const [isFetching, setIsFetching] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [requestsCurrentPage, setRequestsCurrentPage] = useState(1);
@@ -162,17 +158,13 @@ export default function Index() {
   const [hasMoreConversations, setHasMoreConversations] = useState(true);
   const itemsPerPage = 50;
 
-  const loadRequests = async (filter?: string, loadMore = false) => {
+  const loadRequests = async (loadMore = false) => {
     setIsFetching(true);
     const pageToFetch = loadMore ? requestsCurrentPage + 1 : 1;
     try {
-      const currentModelFilter = filter || modelFilter;
       const url = new URL('/api/requests', window.location.origin);
       url.searchParams.append("page", pageToFetch.toString());
       url.searchParams.append("limit", itemsPerPage.toString());
-      if (currentModelFilter !== "all") {
-        url.searchParams.append("model", currentModelFilter);
-      }
 
       const response = await fetch(url.toString());
       if (!response.ok) {
@@ -205,16 +197,13 @@ export default function Index() {
     }
   };
 
-  const loadConversations = async (modelFilter: string = "all", loadMore = false) => {
+  const loadConversations = async (loadMore = false) => {
     setIsFetching(true);
     const pageToFetch = loadMore ? conversationsCurrentPage + 1 : 1;
     try {
       const url = new URL('/api/conversations', window.location.origin);
       url.searchParams.append("page", pageToFetch.toString());
       url.searchParams.append("limit", itemsPerPage.toString());
-      if (modelFilter !== "all") {
-        url.searchParams.append("model", modelFilter);
-      }
       
       const response = await fetch(url.toString());
       if (!response.ok) {
@@ -473,22 +462,13 @@ export default function Index() {
     }
   };
 
-  const handleModelFilterChange = (newFilter: string) => {
-    setModelFilter(newFilter);
-    if (viewMode === 'requests') {
-      loadRequests(newFilter);
-    } else {
-      loadConversations(newFilter);
-    }
-  };
-
   useEffect(() => {
     if (viewMode === 'requests') {
-      loadRequests(modelFilter);
+      loadRequests();
     } else {
-      loadConversations(modelFilter);
+      loadConversations();
     }
-  }, [viewMode, modelFilter]);
+  }, [viewMode]);
 
   // Handle escape key to close modals
   useEffect(() => {
@@ -516,107 +496,47 @@ export default function Index() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <h1 className="text-lg font-semibold text-gray-900">Claude Code Monitor</h1>
-            </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => loadRequests()}
-                className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                title="Refresh"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-              <button
-                onClick={clearRequests}
-                className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-                title="Clear all requests"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
+        <div className="relative max-w-7xl mx-auto px-6 py-3 flex items-center justify-center">
+          <div className="inline-flex items-center bg-gray-100 rounded p-0.5">
+            <button
+              onClick={() => setViewMode("requests")}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                viewMode === "requests"
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Requests
+            </button>
+            <button
+              onClick={() => setViewMode("conversations")}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                viewMode === "conversations"
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              Conversations
+            </button>
+          </div>
+          <div className="absolute right-6 flex items-center space-x-2">
+            <button
+              onClick={() => viewMode === "requests" ? loadRequests() : loadConversations()}
+              className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={clearRequests}
+              className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+              title="Clear all requests"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </header>
-
-      {/* View mode toggle */}
-      <div className="mb-4 flex justify-center">
-        <div className="inline-flex items-center bg-gray-100 rounded p-0.5">
-          <button
-            onClick={() => setViewMode("requests")}
-            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-              viewMode === "requests"
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Requests
-          </button>
-          <button
-            onClick={() => setViewMode("conversations")}
-            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-              viewMode === "conversations"
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Conversations
-          </button>
-        </div>
-      </div>
-
-      {/* Filter buttons - only show for requests view */}
-      {viewMode === "requests" && (
-        <div className="mb-6 flex justify-center">
-          <div className="inline-flex items-center bg-gray-100 rounded p-0.5 space-x-0.5">
-            <button
-              onClick={() => handleModelFilterChange("all")}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-all duration-200 ${
-                modelFilter === "all"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "bg-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              All Models
-            </button>
-            <button
-              onClick={() => handleModelFilterChange("opus")}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-all duration-200 flex items-center space-x-1 ${
-                modelFilter === "opus"
-                  ? "bg-white text-purple-600 shadow-sm"
-                  : "bg-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              <Brain className="w-3 h-3" />
-              <span>Opus</span>
-            </button>
-            <button
-              onClick={() => handleModelFilterChange("sonnet")}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-all duration-200 flex items-center space-x-1 ${
-                modelFilter === "sonnet"
-                  ? "bg-white text-indigo-600 shadow-sm"
-                  : "bg-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>Sonnet</span>
-            </button>
-            <button
-              onClick={() => handleModelFilterChange("haiku")}
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-all duration-200 flex items-center space-x-1 ${
-                modelFilter === "haiku"
-                  ? "bg-white text-teal-600 shadow-sm"
-                  : "bg-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              <Zap className="w-3 h-3" />
-              <span>Haiku</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
@@ -754,7 +674,7 @@ export default function Index() {
                   {hasMoreRequests && (
                     <div className="p-3 text-center border-t border-gray-100">
                       <button
-                        onClick={() => loadRequests(modelFilter, true)}
+                        onClick={() => loadRequests(true)}
                         disabled={isFetching}
                         className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 transition-colors"
                       >
@@ -836,7 +756,7 @@ export default function Index() {
                   {hasMoreConversations && (
                     <div className="p-3 text-center border-t border-gray-100">
                       <button
-                        onClick={() => loadConversations(modelFilter, true)}
+                        onClick={() => loadConversations(true)}
                         disabled={isFetching}
                         className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 transition-colors"
                       >
