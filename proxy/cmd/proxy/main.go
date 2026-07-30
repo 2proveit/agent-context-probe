@@ -79,9 +79,6 @@ func main() {
 	r.HandleFunc("/api/requests", h.GetRequests).Methods("GET")
 	r.HandleFunc("/api/requests", h.DeleteRequests).Methods("DELETE")
 	r.HandleFunc("/api/ui-config", h.UIConfig).Methods("GET")
-	r.HandleFunc("/api/conversations", h.GetConversations).Methods("GET")
-	r.HandleFunc("/api/conversations/{id}", h.GetConversationByID).Methods("GET")
-	r.HandleFunc("/api/conversations/project", h.GetConversationsByProject).Methods("GET")
 
 	r.NotFoundHandler = http.HandlerFunc(h.NotFound)
 

@@ -17,7 +17,6 @@ import {
   Users,
   Target,
   Cpu,
-  MessageCircle,
   CheckCircle,
   ClipboardCheck,
   BarChart3,
@@ -30,7 +29,6 @@ import {
 } from "lucide-react";
 
 import RequestDetailContent from "../components/RequestDetailContent";
-import { ConversationThread } from "../components/ConversationThread";
 import {
   getAPIProtocol,
   getProtocolBadgeClasses,
@@ -46,9 +44,6 @@ export const meta: MetaFunction = () => {
 
 interface Request {
   id: number;
-  conversationId?: string;
-  turnNumber?: number;
-  isRoot?: boolean;
   timestamp: string;
   method: string;
   endpoint: string;
@@ -109,53 +104,14 @@ interface Request {
   };
 }
 
-interface ConversationSummary {
-  id: string;
-  requestCount: number;
-  startTime: string;
-  lastActivity: string;
-  duration: number;
-  firstMessage: string;
-  lastMessage: string;
-  projectName: string;
-}
-
-interface Conversation {
-  sessionId: string;
-  projectPath: string;
-  projectName: string;
-  messages: Array<{
-    parentUuid: string | null;
-    isSidechain: boolean;
-    userType: string;
-    cwd: string;
-    sessionId: string;
-    version: string;
-    type: 'user' | 'assistant';
-    message: any;
-    uuid: string;
-    timestamp: string;
-  }>;
-  startTime: string;
-  endTime: string;
-  messageCount: number;
-}
-
 export default function Index() {
   const [requests, setRequests] = useState<Request[]>([]);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [filter, setFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<"requests" | "conversations">("requests");
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isConversationModalOpen, setIsConversationModalOpen] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [requestsCurrentPage, setRequestsCurrentPage] = useState(1);
   const [hasMoreRequests, setHasMoreRequests] = useState(true);
-  const [conversationsCurrentPage, setConversationsCurrentPage] = useState(1);
-  const [hasMoreConversations, setHasMoreConversations] = useState(true);
   const itemsPerPage = 50;
 
   const loadRequests = async (loadMore = false) => {
@@ -197,54 +153,6 @@ export default function Index() {
     }
   };
 
-  const loadConversations = async (loadMore = false) => {
-    setIsFetching(true);
-    const pageToFetch = loadMore ? conversationsCurrentPage + 1 : 1;
-    try {
-      const url = new URL('/api/conversations', window.location.origin);
-      url.searchParams.append("page", pageToFetch.toString());
-      url.searchParams.append("limit", itemsPerPage.toString());
-      
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      startTransition(() => {
-        if (loadMore) {
-          setConversations(prev => [...prev, ...data.conversations]);
-        } else {
-          setConversations(data.conversations);
-        }
-        setConversationsCurrentPage(pageToFetch);
-        setHasMoreConversations(data.conversations.length === itemsPerPage);
-      });
-    } catch (error) {
-      console.error('Failed to load conversations:', error);
-      startTransition(() => {
-        setConversations([]);
-      });
-    } finally {
-      setIsFetching(false);
-    }
-  };
-
-  const loadConversationDetails = async (conversationId: string, projectName: string) => {
-    try {
-      const response = await fetch(`/api/conversations/${conversationId}?project=${encodeURIComponent(projectName)}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const conversation = await response.json();
-      setSelectedConversation(conversation);
-      setIsConversationModalOpen(true);
-    } catch (error) {
-      console.error('Failed to load conversation details:', error);
-    }
-  };
-
   const clearRequests = async () => {
     try {
       const response = await fetch('/api/requests', {
@@ -253,33 +161,13 @@ export default function Index() {
       
       if (response.ok) {
         setRequests([]);
-        setConversations([]);
         setRequestsCurrentPage(1);
         setHasMoreRequests(true);
-        setConversationsCurrentPage(1);
-        setHasMoreConversations(true);
       }
     } catch (error) {
       console.error('Failed to clear requests:', error);
       setRequests([]);
     }
-  };
-
-  const filterRequests = (filter: string) => {
-    if (filter === 'all') return requests;
-    
-    return requests.filter(req => {
-      switch (filter) {
-        case 'messages':
-          return req.endpoint.includes('/messages');
-        case 'completions':
-          return req.endpoint.includes('/completions');
-        case 'models':
-          return req.endpoint.includes('/models');
-        default:
-          return true;
-      }
-    });
   };
 
   const getMethodColor = (method: string) => {
@@ -406,21 +294,6 @@ export default function Index() {
     return '-/5';
   };
 
-  const formatDuration = (milliseconds: number) => {
-    if (milliseconds < 60000) {
-      return `${Math.round(milliseconds / 1000)}s`;
-    } else if (milliseconds < 3600000) {
-      return `${Math.round(milliseconds / 60000)}m`;
-    } else {
-      return `${Math.round(milliseconds / 3600000)}h`;
-    }
-  };
-
-  const formatConversationSummary = (conversation: ConversationSummary) => {
-    const duration = formatDuration(conversation.duration);
-    return `${conversation.requestCount} requests • ${duration} duration`;
-  };
-
   const canGradeRequest = (request: Request) => {
     return request.body && 
            request.body.messages && 
@@ -463,12 +336,8 @@ export default function Index() {
   };
 
   useEffect(() => {
-    if (viewMode === 'requests') {
-      loadRequests();
-    } else {
-      loadConversations();
-    }
-  }, [viewMode]);
+    loadRequests();
+  }, []);
 
   // Handle escape key to close modals
   useEffect(() => {
@@ -476,9 +345,6 @@ export default function Index() {
       if (event.key === 'Escape') {
         if (isModalOpen) {
           closeModal();
-        } else if (isConversationModalOpen) {
-          setIsConversationModalOpen(false);
-          setSelectedConversation(null);
         }
       }
     };
@@ -488,40 +354,16 @@ export default function Index() {
     return () => {
       window.removeEventListener('keydown', handleEscapeKey);
     };
-  }, [isModalOpen, isConversationModalOpen]);
-
-  const filteredRequests = filterRequests(filter);
+  }, [isModalOpen]);
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
-        <div className="relative max-w-7xl mx-auto px-6 py-3 flex items-center justify-center">
-          <div className="inline-flex items-center bg-gray-100 rounded p-0.5">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-end">
+          <div className="flex items-center space-x-2">
             <button
-              onClick={() => setViewMode("requests")}
-              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                viewMode === "requests"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Requests
-            </button>
-            <button
-              onClick={() => setViewMode("conversations")}
-              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                viewMode === "conversations"
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              Conversations
-            </button>
-          </div>
-          <div className="absolute right-6 flex items-center space-x-2">
-            <button
-              onClick={() => viewMode === "requests" ? loadRequests() : loadConversations()}
+              onClick={() => loadRequests()}
               className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"
               title="Refresh"
             >
@@ -546,20 +388,18 @@ export default function Index() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {viewMode === "requests" ? "Total Requests" : "Total Conversations"}
+                  Total Requests
                 </p>
                 <p className="text-2xl font-semibold text-gray-900 mt-1">
-                  {viewMode === "requests" ? requests.length : conversations.length}
+                  {requests.length}
                 </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Main Content */}
-        {viewMode === "requests" ? (
-          /* Request History */
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        {/* Request History */}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
             <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Request History</h2>
@@ -571,14 +411,14 @@ export default function Index() {
                   <Loader2 className="w-6 h-6 mx-auto animate-spin text-gray-400" />
                   <p className="mt-2 text-xs text-gray-500">Loading requests...</p>
                 </div>
-              ) : filteredRequests.length === 0 ? (
+              ) : requests.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <h3 className="text-sm font-medium text-gray-600 mb-1">No requests found</h3>
                   <p className="text-xs text-gray-500">Make sure you have set <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">ANTHROPIC_BASE_URL</code> to point at the proxy</p>
                 </div>
               ) : (
                 <>
-                  {filteredRequests.map(request => (
+                  {requests.map(request => (
                     <div key={request.id} className="px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer border-b border-gray-100 last:border-b-0" onClick={() => showRequestDetails(request.id)}>
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0 mr-4">
@@ -621,11 +461,6 @@ export default function Index() {
                             {request.body?.stream && (
                               <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
                                 stream
-                              </span>
-                            )}
-                            {request.conversationId && (
-                              <span className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded font-medium">
-                                Turn {request.turnNumber}
                               </span>
                             )}
                           </div>
@@ -685,90 +520,7 @@ export default function Index() {
                 </>
               )}
             </div>
-          </div>
-        ) : (
-          /* Conversations View */
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-              <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Conversations</h2>
-            </div>
-            <div className="divide-y divide-gray-200">
-              {(isFetching && conversationsCurrentPage === 1) || isPending ? (
-                <div className="p-8 text-center">
-                  <Loader2 className="w-6 h-6 mx-auto animate-spin text-gray-400" />
-                  <p className="mt-2 text-xs text-gray-500">Loading conversations...</p>
-                </div>
-              ) : conversations.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  <h3 className="text-sm font-medium text-gray-600 mb-1">No conversations found</h3>
-                  <p className="text-xs text-gray-500">Start a conversation to see it appear here</p>
-                </div>
-              ) : (
-                <>
-                  {conversations.map(conversation => (
-                    <div key={conversation.id} className="px-4 py-4 hover:bg-gray-50 transition-colors cursor-pointer border-b border-gray-100 last:border-b-0" onClick={() => loadConversationDetails(conversation.id, conversation.projectName)}>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0 mr-4">
-                          <div className="flex items-center space-x-2 mb-2">
-                            <span className="text-sm font-semibold text-gray-900 font-mono">
-                              #{conversation.id.slice(-8)}
-                            </span>
-                            <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
-                              {conversation.requestCount} turns
-                            </span>
-                            <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700 rounded-full">
-                              {formatDuration(conversation.duration)}
-                            </span>
-                            {conversation.projectName && (
-                              <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">
-                                {conversation.projectName}
-                              </span>
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <div className="bg-gray-50 rounded p-2 border border-gray-200">
-                              <div className="text-xs font-medium text-gray-600 mb-0.5">First Message</div>
-                              <div className="text-xs text-gray-700 line-clamp-2">
-                                {conversation.firstMessage || "No content"}
-                              </div>
-                            </div>
-                            {conversation.lastMessage && conversation.lastMessage !== conversation.firstMessage && (
-                              <div className="bg-blue-50 rounded p-2 border border-blue-200">
-                                <div className="text-xs font-medium text-blue-600 mb-0.5">Latest Message</div>
-                                <div className="text-xs text-gray-700 line-clamp-2">
-                                  {conversation.lastMessage}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex-shrink-0 text-right">
-                          <div className="text-xs text-gray-500">
-                            {new Date(conversation.startTime).toLocaleDateString()}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {new Date(conversation.startTime).toLocaleTimeString()}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {hasMoreConversations && (
-                    <div className="p-3 text-center border-t border-gray-100">
-                      <button
-                        onClick={() => loadConversations(true)}
-                        disabled={isFetching}
-                        className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 disabled:opacity-50 transition-colors"
-                      >
-                        {isFetching ? "Loading..." : "Load More"}
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
       </main>
 
       {/* Request Detail Modal */}
@@ -796,56 +548,6 @@ export default function Index() {
         </div>
       )}
 
-      {/* Conversation Detail Modal */}
-      {isConversationModalOpen && selectedConversation && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-white rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
-            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <MessageCircle className="w-5 h-5 text-blue-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Conversation {selectedConversation.sessionId.slice(-8)}
-                  </h3>
-                  <span className="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded-full">
-                    {selectedConversation.messageCount} messages
-                  </span>
-                </div>
-                <button 
-                  onClick={() => setIsConversationModalOpen(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-100px)]">
-              <div className="space-y-6">
-                {/* Conversation Overview */}
-                <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-6">
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-600">{selectedConversation.messageCount}</div>
-                      <div className="text-sm text-gray-600">Messages</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-sm font-medium text-gray-700">{new Date(selectedConversation.startTime).toLocaleDateString()}</div>
-                      <div className="text-sm text-gray-600">Started</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-sm font-medium text-gray-700">{new Date(selectedConversation.endTime).toLocaleDateString()}</div>
-                      <div className="text-sm text-gray-600">Last Activity</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Conversation Thread */}
-                <ConversationThread conversation={selectedConversation} />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

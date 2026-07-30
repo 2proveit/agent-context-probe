@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
-
 	"github.com/seifghazi/claude-code-monitor/internal/model"
 	"github.com/seifghazi/claude-code-monitor/internal/service"
 )
@@ -34,13 +32,12 @@ type Options struct {
 }
 
 type Handler struct {
-	anthropicService    service.AnthropicService
-	storageService      service.StorageService
-	conversationService service.ConversationService
-	modelRouter         *service.ModelRouter
-	openAIProvider      openAIForwarder
-	logger              *log.Logger
-	options             Options
+	anthropicService service.AnthropicService
+	storageService   service.StorageService
+	modelRouter      *service.ModelRouter
+	openAIProvider   openAIForwarder
+	logger           *log.Logger
+	options          Options
 }
 
 func New(
@@ -51,16 +48,13 @@ func New(
 	openAIProvider openAIForwarder,
 	options Options,
 ) *Handler {
-	conversationService := service.NewConversationService()
-
 	return &Handler{
-		anthropicService:    anthropicService,
-		storageService:      storageService,
-		conversationService: conversationService,
-		modelRouter:         modelRouter,
-		openAIProvider:      openAIProvider,
-		logger:              logger,
-		options:             options,
+		anthropicService: anthropicService,
+		storageService:   storageService,
+		modelRouter:      modelRouter,
+		openAIProvider:   openAIProvider,
+		logger:           logger,
+		options:          options,
 	}
 }
 
@@ -808,186 +802,4 @@ func writeOpenAIError(w http.ResponseWriter, message, errorType, code string, st
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(openAIErrorPayload(message, errorType, code))
-}
-
-// extractTextFromMessage tries multiple strategies to extract text from a message
-func extractTextFromMessage(message json.RawMessage) string {
-	// Strategy 1: Direct string (simple text message)
-	var directString string
-	if err := json.Unmarshal(message, &directString); err == nil && directString != "" {
-		return directString
-	}
-
-	// Strategy 2: Array format [{"type": "text", "text": "..."}]
-	var msgArray []interface{}
-	if err := json.Unmarshal(message, &msgArray); err == nil {
-		for _, item := range msgArray {
-			if itemMap, ok := item.(map[string]interface{}); ok {
-				if itemMap["type"] == "text" {
-					if text, ok := itemMap["text"].(string); ok && text != "" {
-						return text
-					}
-				}
-			}
-		}
-	}
-
-	// Strategy 3: Content object format {"content": [{"type": "text", "text": "..."}]}
-	var msgContent map[string]interface{}
-	if err := json.Unmarshal(message, &msgContent); err == nil {
-		if content, ok := msgContent["content"]; ok {
-			if contentArray, ok := content.([]interface{}); ok {
-				for _, block := range contentArray {
-					if blockMap, ok := block.(map[string]interface{}); ok {
-						if blockMap["type"] == "text" {
-							if text, ok := blockMap["text"].(string); ok && text != "" {
-								return text
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// Also check if content is a string directly
-		if contentStr, ok := msgContent["content"].(string); ok && contentStr != "" {
-			return contentStr
-		}
-	}
-
-	// Strategy 4: Single object with text field {"type": "text", "text": "..."}
-	var singleObj map[string]interface{}
-	if err := json.Unmarshal(message, &singleObj); err == nil {
-		if singleObj["type"] == "text" {
-			if text, ok := singleObj["text"].(string); ok && text != "" {
-				return text
-			}
-		}
-
-		// Also check for content field at top level
-		if text, ok := singleObj["content"].(string); ok && text != "" {
-			return text
-		}
-	}
-
-	return ""
-}
-
-// Conversation handlers
-
-func (h *Handler) GetConversations(w http.ResponseWriter, r *http.Request) {
-
-	conversations, err := h.conversationService.GetConversations()
-	if err != nil {
-		log.Printf("❌ Error getting conversations: %v", err)
-		writeErrorResponse(w, "Failed to get conversations", http.StatusInternalServerError)
-		return
-	}
-
-	// Flatten all conversations into a single array for the UI
-	var allConversations []map[string]interface{}
-	for _, convs := range conversations {
-		for _, conv := range convs {
-			// Extract first user message from the conversation
-			var firstMessage string
-			for _, msg := range conv.Messages {
-				if msg.Type == "user" {
-					// Try multiple parsing strategies
-					text := extractTextFromMessage(msg.Message)
-					if text != "" {
-						firstMessage = text
-						if len(firstMessage) > 200 {
-							firstMessage = firstMessage[:200] + "..."
-						}
-						break
-					}
-				}
-			}
-
-			allConversations = append(allConversations, map[string]interface{}{
-				"id":           conv.SessionID,
-				"requestCount": conv.MessageCount,
-				"startTime":    conv.StartTime.Format(time.RFC3339),
-				"lastActivity": conv.EndTime.Format(time.RFC3339),
-				"duration":     conv.EndTime.Sub(conv.StartTime).Milliseconds(),
-				"firstMessage": firstMessage,
-				"projectName":  conv.ProjectName,
-			})
-		}
-	}
-
-	// Sort by last activity (newest first)
-	sort.Slice(allConversations, func(i, j int) bool {
-		t1, _ := time.Parse(time.RFC3339, allConversations[i]["lastActivity"].(string))
-		t2, _ := time.Parse(time.RFC3339, allConversations[j]["lastActivity"].(string))
-		return t1.After(t2)
-	})
-
-	// Apply pagination
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = 10
-	}
-
-	start := (page - 1) * limit
-	end := start + limit
-	if start > len(allConversations) {
-		allConversations = []map[string]interface{}{}
-	} else {
-		if end > len(allConversations) {
-			end = len(allConversations)
-		}
-		allConversations = allConversations[start:end]
-	}
-
-	response := map[string]interface{}{
-		"conversations": allConversations,
-	}
-
-	writeJSONResponse(w, response)
-}
-
-func (h *Handler) GetConversationByID(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	sessionID, ok := vars["id"]
-	if !ok {
-		http.Error(w, "Session ID is required", http.StatusBadRequest)
-		return
-	}
-
-	projectPath := r.URL.Query().Get("project")
-	if projectPath == "" {
-		http.Error(w, "Project path is required", http.StatusBadRequest)
-		return
-	}
-
-	conversation, err := h.conversationService.GetConversation(projectPath, sessionID)
-	if err != nil {
-		log.Printf("❌ Error getting conversation: %v", err)
-		http.Error(w, "Conversation not found", http.StatusNotFound)
-		return
-	}
-
-	writeJSONResponse(w, conversation)
-}
-
-func (h *Handler) GetConversationsByProject(w http.ResponseWriter, r *http.Request) {
-	projectPath := r.URL.Query().Get("project")
-	if projectPath == "" {
-		http.Error(w, "Project path is required", http.StatusBadRequest)
-		return
-	}
-
-	conversations, err := h.conversationService.GetConversationsByProject(projectPath)
-	if err != nil {
-		log.Printf("❌ Error getting project conversations: %v", err)
-		writeErrorResponse(w, "Failed to get project conversations", http.StatusInternalServerError)
-		return
-	}
-
-	writeJSONResponse(w, conversations)
 }
