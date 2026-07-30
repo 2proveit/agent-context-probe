@@ -471,18 +471,44 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
 function normalizeRequestMessages(body?: Request['body']): Array<{ role: string; content: any }> {
   if (!body) return [];
   if (Array.isArray(body.messages)) {
-    return body.messages.map(message => ({
-      role: message.role,
-      content: message.tool_calls?.length
-        ? [
-            ...(message.content ? [{ type: 'text', text: message.content }] : []),
-            ...message.tool_calls.map((toolCall: any) => ({
-              type: 'function_call',
-              ...toolCall,
-            })),
-          ]
-        : message.content,
-    }));
+    const toolNamesById = new Map<string, string>();
+    for (const message of body.messages) {
+      for (const toolCall of message.tool_calls || []) {
+        if (toolCall?.id && toolCall?.function?.name) {
+          toolNamesById.set(toolCall.id, toolCall.function.name);
+        }
+      }
+    }
+
+    return body.messages.map(message => {
+      if (message.role === 'tool') {
+        return {
+          role: message.role,
+          content: {
+            type: 'function_call_output',
+            call_id: message.tool_call_id,
+            tool_call_id: message.tool_call_id,
+            name: (message as any).name || (
+              message.tool_call_id ? toolNamesById.get(message.tool_call_id) : undefined
+            ),
+            output: message.content,
+          },
+        };
+      }
+
+      return {
+        role: message.role,
+        content: message.tool_calls?.length
+          ? [
+              ...(message.content ? [{ type: 'text', text: message.content }] : []),
+              ...message.tool_calls.map((toolCall: any) => ({
+                ...toolCall,
+                type: 'function_call',
+              })),
+            ]
+          : message.content,
+      };
+    });
   }
   if (typeof body.input === 'string') {
     return [{ role: 'user', content: body.input }];

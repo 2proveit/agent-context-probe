@@ -11,6 +11,7 @@ interface ContentItem {
   content?: any;
   name?: string;
   id?: string;
+  call_id?: string;
   input?: Record<string, any>;
   tool_call_id?: string;
   is_error?: boolean;
@@ -18,6 +19,11 @@ interface ContentItem {
   file_id?: string;
   filename?: string;
   arguments?: string;
+  output?: any;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
   data?: string;
   media_type?: string;
   source?: {
@@ -134,17 +140,57 @@ export function MessageContent({ content }: MessageContentProps) {
         );
 
       case 'function_call':
-      case 'function_call_output':
+      case 'function': {
+        const functionName = content.name || content.function?.name || 'Unknown Tool';
+        const functionId = content.call_id || content.tool_call_id || content.id || 'unknown';
+        const rawArguments = content.arguments ?? content.function?.arguments;
+        let input: Record<string, any> = {};
+
+        if (rawArguments && typeof rawArguments === 'string') {
+          try {
+            const parsedArguments = JSON.parse(rawArguments);
+            input = parsedArguments && typeof parsedArguments === 'object'
+              ? parsedArguments
+              : { value: parsedArguments };
+          } catch {
+            input = { arguments: rawArguments };
+          }
+        } else if (rawArguments && typeof rawArguments === 'object') {
+          input = rawArguments;
+        }
+
         return (
-          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-            <div className="text-sm font-medium text-purple-700">
-              {content.name || content.type}
-            </div>
-            <pre className="mt-2 text-xs overflow-x-auto bg-white rounded p-3 border border-purple-200">
-              {JSON.stringify(content, null, 2)}
-            </pre>
-          </div>
+          <ToolUse
+            name={functionName}
+            id={functionId}
+            input={input}
+            title="Tool Call"
+            statusText="Tool call received"
+          />
         );
+      }
+
+      case 'function_call_output': {
+        const rawOutput = content.output ?? content.content ?? content.text ?? '';
+        let output = rawOutput;
+
+        if (typeof rawOutput === 'string') {
+          try {
+            output = JSON.parse(rawOutput);
+          } catch {
+            output = rawOutput;
+          }
+        }
+
+        return (
+          <ToolResult
+            content={output}
+            toolId={content.call_id || content.tool_call_id || content.id}
+            toolName={content.name}
+            isError={content.is_error || false}
+          />
+        );
+      }
 
       default:
         return (

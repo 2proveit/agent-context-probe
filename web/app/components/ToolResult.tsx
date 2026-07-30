@@ -6,10 +6,11 @@ import { CodeViewer } from './CodeViewer';
 interface ToolResultProps {
   content: any;
   toolId?: string;
+  toolName?: string;
   isError?: boolean;
 }
 
-export function ToolResult({ content, toolId, isError = false }: ToolResultProps) {
+export function ToolResult({ content, toolId, toolName, isError = false }: ToolResultProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Detect if this is likely code content from a Read tool
@@ -102,8 +103,8 @@ export function ToolResult({ content, toolId, isError = false }: ToolResultProps
   // Determine if content should be rendered as JSON
   const isJSONContent = isComplexObject(content) || (typeof content === 'string' && content.startsWith('{'));
   
-  // Check if this is code content
-  const isCode = isCodeContent(displayContent);
+  // JSON results can contain code-like punctuation, but should remain JSON.
+  const isCode = !isJSONContent && isCodeContent(displayContent);
   const { code: extractedCode } = isCode ? extractCodeFromCatN(displayContent) : { code: displayContent };
 
   const getResultConfig = () => {
@@ -151,8 +152,15 @@ export function ToolResult({ content, toolId, isError = false }: ToolResultProps
               </span>
               <Database className="w-4 h-4 text-gray-500" />
             </div>
+            {toolName && (
+              <div className="mt-1">
+                <span className="font-mono text-sm text-emerald-700 bg-white px-2 py-1 rounded-md border border-emerald-200 font-medium">
+                  {toolName}
+                </span>
+              </div>
+            )}
             {toolId && (
-              <div className="flex items-center space-x-2 mt-1">
+              <div className="flex items-center space-x-2 mt-2">
                 <FileText className="w-3 h-3 text-gray-500" />
                 <span className="text-xs text-gray-500 font-mono bg-white px-2 py-1 rounded-md border border-gray-200">
                   {toolId}

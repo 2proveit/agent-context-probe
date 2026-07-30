@@ -9,9 +9,18 @@ interface ToolUseProps {
   id: string;
   input?: Record<string, any>;
   text?: string;
+  title?: string;
+  statusText?: string;
 }
 
-export function ToolUse({ name, id, input = {}, text }: ToolUseProps) {
+export function ToolUse({
+  name,
+  id,
+  input = {},
+  text,
+  title = 'Tool Execution',
+  statusText = 'Tool execution initiated',
+}: ToolUseProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -73,7 +82,7 @@ export function ToolUse({ name, id, input = {}, text }: ToolUseProps) {
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-indigo-900 font-semibold text-base">Tool Execution</span>
+              <span className="text-indigo-900 font-semibold text-base">{title}</span>
               <Zap className="w-4 h-4 text-indigo-600" />
             </div>
             <div className="flex items-center space-x-2 mt-1">
@@ -201,7 +210,7 @@ export function ToolUse({ name, id, input = {}, text }: ToolUseProps) {
       <div className="mt-4 pt-3 border-t border-indigo-200">
         <div className="flex items-center space-x-2 text-xs text-indigo-700">
           <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
-          <span>Tool execution initiated</span>
+          <span>{statusText}</span>
         </div>
       </div>
     </div>
