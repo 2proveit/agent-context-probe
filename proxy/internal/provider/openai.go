@@ -222,126 +222,66 @@ func convertAnthropicToOpenAI(req *model.AnthropicRequest) map[string]interface{
 
 	// Add conversation messages
 	for _, msg := range req.Messages {
-		// Handle messages with raw content that may contain tool results
 		if contentArray, ok := msg.Content.([]interface{}); ok {
-			// Check if this message contains tool results
-			hasToolResults := false
+			textParts := []string{}
+			toolCalls := []map[string]interface{}{}
+			toolResults := []map[string]interface{}{}
+
 			for _, item := range contentArray {
-				if block, ok := item.(map[string]interface{}); ok {
-					if blockType, hasType := block["type"].(string); hasType && blockType == "tool_result" {
-						hasToolResults = true
-						break
+				block, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				switch block["type"] {
+				case "text":
+					if text, ok := block["text"].(string); ok && text != "" {
+						textParts = append(textParts, text)
 					}
+				case "tool_use":
+					arguments, err := json.Marshal(block["input"])
+					if err != nil {
+						arguments = []byte("{}")
+					}
+					toolCalls = append(toolCalls, map[string]interface{}{
+						"id":   block["id"],
+						"type": "function",
+						"function": map[string]interface{}{
+							"name":      block["name"],
+							"arguments": string(arguments),
+						},
+					})
+				case "tool_result":
+					toolResults = append(toolResults, map[string]interface{}{
+						"role":         "tool",
+						"tool_call_id": block["tool_use_id"],
+						"content":      stringifyToolResult(block["content"]),
+					})
 				}
 			}
 
-			if hasToolResults {
-				textContent := ""
-
-				for _, item := range contentArray {
-					if block, ok := item.(map[string]interface{}); ok {
-						if blockType, hasType := block["type"].(string); hasType {
-							if blockType == "text" {
-								if text, hasText := block["text"].(string); hasText {
-									textContent += text + "\n"
-								}
-							} else if blockType == "tool_result" {
-								// Extract tool ID
-								toolID := ""
-								if id, hasID := block["tool_use_id"].(string); hasID {
-									toolID = id
-								}
-
-								// Handle different formats of tool result content
-								resultContent := ""
-								if content, hasContent := block["content"]; hasContent {
-									if contentStr, ok := content.(string); ok {
-										resultContent = contentStr
-									} else if contentList, ok := content.([]interface{}); ok {
-										// If content is a list of blocks, extract text from each
-										for _, c := range contentList {
-											if contentMap, ok := c.(map[string]interface{}); ok {
-												if contentMap["type"] == "text" {
-													if text, ok := contentMap["text"].(string); ok {
-														resultContent += text + "\n"
-													}
-												} else if text, hasText := contentMap["text"]; hasText {
-													// Handle any dict by trying to extract text
-													resultContent += fmt.Sprintf("%v\n", text)
-												} else {
-													// Try to JSON serialize
-													if jsonBytes, err := json.Marshal(contentMap); err == nil {
-														resultContent += string(jsonBytes) + "\n"
-													} else {
-														resultContent += fmt.Sprintf("%v\n", contentMap)
-													}
-												}
-											}
-										}
-									} else if contentDict, ok := content.(map[string]interface{}); ok {
-										// Handle dictionary content
-										if contentDict["type"] == "text" {
-											if text, ok := contentDict["text"].(string); ok {
-												resultContent = text
-											}
-										} else {
-											// Try to JSON serialize
-											if jsonBytes, err := json.Marshal(contentDict); err == nil {
-												resultContent = string(jsonBytes)
-											} else {
-												resultContent = fmt.Sprintf("%v", contentDict)
-											}
-										}
-									} else {
-										// Handle any other type by converting to string
-										if jsonBytes, err := json.Marshal(content); err == nil {
-											resultContent = string(jsonBytes)
-										} else {
-											resultContent = fmt.Sprintf("%v", content)
-										}
-									}
-								}
-
-								// In OpenAI format, tool results come from the user (matching Python behavior)
-								textContent += fmt.Sprintf("Tool result for %s:\n%s\n", toolID, resultContent)
-							}
-						}
-					}
+			if len(toolCalls) > 0 {
+				assistantMessage := map[string]interface{}{
+					"role":       msg.Role,
+					"content":    nil,
+					"tool_calls": toolCalls,
 				}
-
-				// Add as a single user message with all the content
-				if textContent == "" {
-					textContent = "..."
+				if len(textParts) > 0 {
+					assistantMessage["content"] = strings.Join(textParts, "\n")
 				}
-				messages = append(messages, map[string]interface{}{
-					"role":    msg.Role,
-					"content": strings.TrimSpace(textContent),
-				})
+				messages = append(messages, assistantMessage)
 			} else {
-				// Handle regular messages with content blocks
-				content := ""
-
-				for _, item := range contentArray {
-					if block, ok := item.(map[string]interface{}); ok {
-						if blockType, hasType := block["type"].(string); hasType && blockType == "text" {
-							if text, hasText := block["text"].(string); hasText {
-								if content != "" {
-									content += "\n"
-								}
-								content += text
-							}
-						}
-					}
+				messages = append(messages, toolResults...)
+				if len(textParts) > 0 {
+					messages = append(messages, map[string]interface{}{
+						"role":    msg.Role,
+						"content": strings.Join(textParts, "\n"),
+					})
 				}
-
-				// Ensure content is never empty
-				if content == "" {
-					content = "..."
-				}
-
+			}
+			if len(textParts) == 0 && len(toolCalls) == 0 && len(toolResults) == 0 {
 				messages = append(messages, map[string]interface{}{
 					"role":    msg.Role,
-					"content": content,
+					"content": "...",
 				})
 			}
 		} else {
@@ -496,6 +436,36 @@ func convertAnthropicToOpenAI(req *model.AnthropicRequest) map[string]interface{
 	return openAIReq
 }
 
+func stringifyToolResult(content interface{}) string {
+	if content == nil {
+		return ""
+	}
+	if text, ok := content.(string); ok {
+		return text
+	}
+	if contentList, ok := content.([]interface{}); ok {
+		textParts := []string{}
+		for _, item := range contentList {
+			if block, ok := item.(map[string]interface{}); ok && block["type"] == "text" {
+				if text, ok := block["text"].(string); ok {
+					textParts = append(textParts, text)
+					continue
+				}
+			}
+			encoded, err := json.Marshal(item)
+			if err == nil {
+				textParts = append(textParts, string(encoded))
+			}
+		}
+		return strings.Join(textParts, "\n")
+	}
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return fmt.Sprintf("%v", content)
+	}
+	return string(encoded)
+}
+
 func getMapKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -521,9 +491,18 @@ func transformOpenAIResponseToAnthropic(respBody []byte) []byte {
 
 	// Extract the assistant's message
 	var contentBlocks []map[string]interface{}
+	stopReason := "end_turn"
 
 	if choices, ok := openAIResp["choices"].([]interface{}); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if finishReason, ok := choice["finish_reason"].(string); ok {
+				switch finishReason {
+				case "tool_calls":
+					stopReason = "tool_use"
+				case "length":
+					stopReason = "max_tokens"
+				}
+			}
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				// Handle regular text content
 				if content, ok := msg["content"].(string); ok && content != "" {
@@ -584,11 +563,13 @@ func transformOpenAIResponseToAnthropic(respBody []byte) []byte {
 
 	// Build Anthropic-style response
 	anthropicResp := map[string]interface{}{
-		"id":      openAIResp["id"],
-		"type":    "message",
-		"role":    "assistant",
-		"content": contentBlocks,
-		"model":   openAIResp["model"],
+		"id":            openAIResp["id"],
+		"type":          "message",
+		"role":          "assistant",
+		"content":       contentBlocks,
+		"model":         openAIResp["model"],
+		"stop_reason":   stopReason,
+		"stop_sequence": nil,
 	}
 
 	// Convert OpenAI usage format to Anthropic format
@@ -622,7 +603,11 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 
 	scanner := bufio.NewScanner(openAIStream)
 	var messageStarted bool
-	var contentStarted bool
+	textBlockIndex := -1
+	nextBlockIndex := 0
+	toolBlockIndexes := make(map[int]int)
+	openBlockIndexes := make(map[int]bool)
+	stopReason := "end_turn"
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -639,11 +624,17 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 			// Handle end of stream
 			if data == "[DONE]" {
 				// Send Anthropic-style completion
-				if contentStarted {
-					fmt.Fprintf(anthropicStream, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+				for index := 0; index < nextBlockIndex; index++ {
+					if openBlockIndexes[index] {
+						fmt.Fprintf(anthropicStream, "data: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index)
+					}
 				}
 				if messageStarted {
-					fmt.Fprintf(anthropicStream, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null}}\n\n")
+					fmt.Fprintf(
+						anthropicStream,
+						"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":%q,\"stop_sequence\":null}}\n\n",
+						stopReason,
+					)
 					fmt.Fprintf(anthropicStream, "data: {\"type\":\"message_stop\"}\n\n")
 				}
 				break
@@ -697,6 +688,14 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 			if !ok {
 				continue
 			}
+			if finishReason, ok := choice["finish_reason"].(string); ok {
+				switch finishReason {
+				case "tool_calls":
+					stopReason = "tool_use"
+				case "length":
+					stopReason = "max_tokens"
+				}
+			}
 
 			delta, ok := choice["delta"].(map[string]interface{})
 			if !ok {
@@ -727,12 +726,14 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 
 			// Handle content
 			if content, hasContent := delta["content"].(string); hasContent && content != "" {
-				if !contentStarted {
-					contentStarted = true
+				if textBlockIndex == -1 {
+					textBlockIndex = nextBlockIndex
+					nextBlockIndex++
+					openBlockIndexes[textBlockIndex] = true
 					// Send content_block_start
 					blockStart := map[string]interface{}{
 						"type":  "content_block_start",
-						"index": 0,
+						"index": textBlockIndex,
 						"content_block": map[string]interface{}{
 							"type": "text",
 							"text": "",
@@ -745,7 +746,7 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 				// Send content_block_delta
 				contentDelta := map[string]interface{}{
 					"type":  "content_block_delta",
-					"index": 0,
+					"index": textBlockIndex,
 					"delta": map[string]interface{}{
 						"type": "text_delta",
 						"text": content,
@@ -755,6 +756,50 @@ func transformOpenAIStreamToAnthropic(openAIStream io.ReadCloser, anthropicStrea
 				fmt.Fprintf(anthropicStream, "data: %s\n\n", deltaJSON)
 			}
 
+			if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
+				for _, rawToolCall := range toolCalls {
+					toolCall, ok := rawToolCall.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					openAIIndex := 0
+					if index, ok := toolCall["index"].(float64); ok {
+						openAIIndex = int(index)
+					}
+					blockIndex, started := toolBlockIndexes[openAIIndex]
+					function, _ := toolCall["function"].(map[string]interface{})
+					if !started {
+						blockIndex = nextBlockIndex
+						nextBlockIndex++
+						toolBlockIndexes[openAIIndex] = blockIndex
+						openBlockIndexes[blockIndex] = true
+						blockStart := map[string]interface{}{
+							"type":  "content_block_start",
+							"index": blockIndex,
+							"content_block": map[string]interface{}{
+								"type":  "tool_use",
+								"id":    toolCall["id"],
+								"name":  function["name"],
+								"input": map[string]interface{}{},
+							},
+						}
+						blockStartJSON, _ := json.Marshal(blockStart)
+						fmt.Fprintf(anthropicStream, "data: %s\n\n", blockStartJSON)
+					}
+					if arguments, ok := function["arguments"].(string); ok && arguments != "" {
+						inputDelta := map[string]interface{}{
+							"type":  "content_block_delta",
+							"index": blockIndex,
+							"delta": map[string]interface{}{
+								"type":         "input_json_delta",
+								"partial_json": arguments,
+							},
+						}
+						inputDeltaJSON, _ := json.Marshal(inputDelta)
+						fmt.Fprintf(anthropicStream, "data: %s\n\n", inputDeltaJSON)
+					}
+				}
+			}
 		}
 	}
 }

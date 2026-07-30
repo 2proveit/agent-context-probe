@@ -496,13 +496,14 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		return
 	}
 
-	var fullResponseText strings.Builder
-	var toolCalls []model.ContentBlock
+	textBlocks := make(map[int]*strings.Builder)
+	toolCalls := make(map[int]*model.ContentBlock)
 	var streamingChunks []string
 	var finalUsage *model.AnthropicUsage
 	var messageID string
 	var modelName string
 	var stopReason string
+	var messageStopped bool
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -544,6 +545,11 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 
 		// Capture usage data from message_delta event
 		if eventType, ok := genericEvent["type"].(string); ok && eventType == "message_delta" {
+			if delta, ok := genericEvent["delta"].(map[string]interface{}); ok {
+				if reason, ok := delta["stop_reason"].(string); ok {
+					stopReason = reason
+				}
+			}
 			// Usage is at top level for message_delta events
 			if usage, ok := genericEvent["usage"].(map[string]interface{}); ok {
 				// Create finalUsage if it doesn't exist yet
@@ -578,23 +584,48 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		switch event.Type {
 		case "content_block_delta":
 			if event.Delta != nil {
+				index := 0
+				if event.Index != nil {
+					index = *event.Index
+				}
 				if event.Delta.Type == "text_delta" {
-					fullResponseText.WriteString(event.Delta.Text)
+					if textBlocks[index] == nil {
+						textBlocks[index] = &strings.Builder{}
+					}
+					textBlocks[index].WriteString(event.Delta.Text)
 				} else if event.Delta.Type == "input_json_delta" {
-					if event.Index != nil && *event.Index < len(toolCalls) {
-						toolCalls[*event.Index].Input = append(toolCalls[*event.Index].Input, event.Delta.Input...)
+					if toolCalls[index] != nil {
+						toolCalls[index].Input = append(
+							toolCalls[index].Input,
+							[]byte(event.Delta.PartialJSON)...,
+						)
 					}
 				}
 			}
 		case "content_block_start":
-			if event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
-				toolCalls = append(toolCalls, *event.ContentBlock)
+			if event.ContentBlock != nil {
+				index := 0
+				if event.Index != nil {
+					index = *event.Index
+				}
+				switch event.ContentBlock.Type {
+				case "text":
+					if textBlocks[index] == nil {
+						textBlocks[index] = &strings.Builder{}
+					}
+					textBlocks[index].WriteString(event.ContentBlock.Text)
+				case "tool_use":
+					block := *event.ContentBlock
+					block.Input = nil
+					toolCalls[index] = &block
+				}
 			}
 		case "message_stop":
-			// End of stream - scanner will exit on its own
+			messageStopped = true
 		}
 	}
 
+	scanErr := scanner.Err()
 	responseLog := &model.ResponseLog{
 		StatusCode:      resp.StatusCode,
 		Headers:         CaptureHeaders(resp.Header),
@@ -604,46 +635,74 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		CompletedAt:     time.Now().Format(time.RFC3339),
 	}
 
-	// Create a structured response body that matches Anthropic's format
-	var contentBlocks []model.AnthropicContentBlock
-	if fullResponseText.Len() > 0 {
-		contentBlocks = append(contentBlocks, model.AnthropicContentBlock{
-			Type: "text",
-			Text: fullResponseText.String(),
-		})
-	}
+	if scanErr != nil {
+		responseLog.StreamError = "upstream response stream was interrupted"
+	} else if !messageStopped {
+		responseLog.StreamError = "upstream response stream ended before message_stop"
+	} else {
+		blockIndexes := make([]int, 0, len(textBlocks)+len(toolCalls))
+		for index := range textBlocks {
+			blockIndexes = append(blockIndexes, index)
+		}
+		for index := range toolCalls {
+			if _, exists := textBlocks[index]; !exists {
+				blockIndexes = append(blockIndexes, index)
+			}
+		}
+		sort.Ints(blockIndexes)
 
-	// Create an AnthropicResponse-like structure for consistency
-	responseBody := map[string]interface{}{
-		"content":     contentBlocks,
-		"id":          messageID,
-		"model":       modelName,
-		"role":        "assistant",
-		"stop_reason": stopReason,
-		"type":        "message",
-	}
+		contentBlocks := make([]interface{}, 0, len(blockIndexes))
+		for _, index := range blockIndexes {
+			if textBlock := textBlocks[index]; textBlock != nil && textBlock.Len() > 0 {
+				contentBlocks = append(contentBlocks, map[string]interface{}{
+					"type": "text",
+					"text": textBlock.String(),
+				})
+			}
+			if toolCall := toolCalls[index]; toolCall != nil {
+				input := interface{}(map[string]interface{}{})
+				if len(toolCall.Input) > 0 {
+					if err := json.Unmarshal(toolCall.Input, &input); err != nil {
+						input = map[string]interface{}{"raw": string(toolCall.Input)}
+					}
+				}
+				contentBlocks = append(contentBlocks, map[string]interface{}{
+					"type":  "tool_use",
+					"id":    toolCall.ID,
+					"name":  toolCall.Name,
+					"input": input,
+				})
+			}
+		}
 
-	// Add usage data if we captured it
-	if finalUsage != nil {
-		responseBody["usage"] = finalUsage
+		responseBody := map[string]interface{}{
+			"content":     contentBlocks,
+			"id":          messageID,
+			"model":       modelName,
+			"role":        "assistant",
+			"stop_reason": stopReason,
+			"type":        "message",
+		}
+		if finalUsage != nil {
+			responseBody["usage"] = finalUsage
+		}
+		responseBodyBytes, err := json.Marshal(responseBody)
+		if err != nil {
+			log.Printf("❌ Error marshaling streaming response body: %v", err)
+			responseBodyBytes = []byte("{}")
+		}
+		responseLog.Body = json.RawMessage(responseBodyBytes)
 	}
-
-	// Marshal to JSON for storage
-	responseBodyBytes, err := json.Marshal(responseBody)
-	if err != nil {
-		log.Printf("❌ Error marshaling streaming response body: %v", err)
-		responseBodyBytes = []byte("{}")
-	}
-
-	responseLog.Body = json.RawMessage(responseBodyBytes)
 
 	requestLog.Response = responseLog
 	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
 		log.Printf("❌ Error updating request with streaming response: %v", err)
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("❌ Streaming error: %v", err)
+	if scanErr != nil {
+		log.Printf("❌ Streaming error: %v", scanErr)
+	} else if responseLog.StreamError != "" {
+		log.Printf("❌ Streaming error: %s", responseLog.StreamError)
 	} else {
 		log.Println("✅ Streaming response completed")
 	}

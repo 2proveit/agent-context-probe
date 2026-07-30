@@ -478,6 +478,11 @@ function normalizeRequestMessages(body?: Request['body']): Array<{ role: string;
           toolNamesById.set(toolCall.id, toolCall.function.name);
         }
       }
+      for (const content of Array.isArray(message.content) ? message.content : []) {
+        if (content?.type === 'tool_use' && content?.id && content?.name) {
+          toolNamesById.set(content.id, content.name);
+        }
+      }
     }
 
     return body.messages.map(message => {
@@ -506,7 +511,16 @@ function normalizeRequestMessages(body?: Request['body']): Array<{ role: string;
                 type: 'function_call',
               })),
             ]
-          : message.content,
+          : Array.isArray(message.content)
+            ? message.content.map((content: any) => (
+                content?.type === 'tool_result'
+                  ? {
+                      ...content,
+                      name: content.name || toolNamesById.get(content.tool_use_id),
+                    }
+                  : content
+              ))
+            : message.content,
       };
     });
   }

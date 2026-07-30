@@ -733,7 +733,7 @@ export default function Index() {
                               <span className="font-mono text-red-600">interrupted</span>
                             )}
                             
-                            {request.response?.responseTime && (
+                            {request.response?.responseTime !== undefined && request.response?.responseTime !== null && (
                               <span className="font-mono text-gray-600">
                                 <span className="font-medium text-gray-900">{(request.response.responseTime / 1000).toFixed(2)}</span>s
                               </span>

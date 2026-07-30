@@ -14,6 +14,7 @@ interface ContentItem {
   call_id?: string;
   input?: Record<string, any>;
   tool_call_id?: string;
+  tool_use_id?: string;
   is_error?: boolean;
   image_url?: string | { url?: string };
   file_id?: string;
@@ -95,6 +96,8 @@ export function MessageContent({ content }: MessageContentProps) {
             id={content.id || 'unknown'}
             input={content.input || {}}
             text={content.text}
+            title="Tool Call"
+            statusText="Tool call received"
           />
         );
 
@@ -104,7 +107,8 @@ export function MessageContent({ content }: MessageContentProps) {
         return (
           <ToolResult
             content={resultContent}
-            toolId={content.tool_call_id || content.id}
+            toolId={content.tool_call_id || content.tool_use_id || content.id}
+            toolName={content.name}
             isError={content.is_error || false}
           />
         );

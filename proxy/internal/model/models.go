@@ -188,10 +188,11 @@ type StreamingEvent struct {
 }
 
 type Delta struct {
-	Type  string          `json:"type,omitempty"`
-	Text  string          `json:"text,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	Type        string          `json:"type,omitempty"`
+	Text        string          `json:"text,omitempty"`
+	Name        string          `json:"name,omitempty"`
+	Input       json.RawMessage `json:"input,omitempty"`
+	PartialJSON string          `json:"partial_json,omitempty"`
 }
 
 type ContentBlock struct {
