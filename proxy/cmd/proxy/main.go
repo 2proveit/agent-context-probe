@@ -30,7 +30,8 @@ func main() {
 	// Initialize providers
 	providers := make(map[string]provider.Provider)
 	providers["anthropic"] = provider.NewAnthropicProvider(&cfg.Providers.Anthropic)
-	providers["openai"] = provider.NewOpenAIProvider(&cfg.Providers.OpenAI)
+	openAIProvider := provider.NewOpenAIProvider(&cfg.Providers.OpenAI)
+	providers["openai"] = openAIProvider
 
 	// Initialize model router
 	modelRouter := service.NewModelRouter(cfg, providers, logger)
@@ -45,7 +46,7 @@ func main() {
 	}
 	logger.Println("🗿 SQLite database ready")
 
-	h := handler.New(anthropicService, storageService, logger, modelRouter)
+	h := handler.New(anthropicService, storageService, logger, modelRouter, openAIProvider)
 
 	r := mux.NewRouter()
 
@@ -84,6 +85,7 @@ func main() {
 		logger.Printf("🚀 Claude Code Monitor Server running on http://localhost:%s", cfg.Server.Port)
 		logger.Printf("📡 API endpoints available at:")
 		logger.Printf("   - POST http://localhost:%s/v1/messages (Anthropic format)", cfg.Server.Port)
+		logger.Printf("   - POST http://localhost:%s/v1/chat/completions (OpenAI format)", cfg.Server.Port)
 		logger.Printf("   - GET  http://localhost:%s/v1/models", cfg.Server.Port)
 		logger.Printf("   - GET  http://localhost:%s/health", cfg.Server.Port)
 		logger.Printf("🎨 Web UI available at:")

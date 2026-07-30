@@ -3,6 +3,7 @@ package handler
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -22,15 +23,26 @@ import (
 	"github.com/seifghazi/claude-code-monitor/internal/service"
 )
 
+type openAIChatCompletionsForwarder interface {
+	ForwardChatCompletions(context.Context, *http.Request) (*http.Response, error)
+}
+
 type Handler struct {
 	anthropicService    service.AnthropicService
 	storageService      service.StorageService
 	conversationService service.ConversationService
 	modelRouter         *service.ModelRouter
+	openAIProvider      openAIChatCompletionsForwarder
 	logger              *log.Logger
 }
 
-func New(anthropicService service.AnthropicService, storageService service.StorageService, logger *log.Logger, modelRouter *service.ModelRouter) *Handler {
+func New(
+	anthropicService service.AnthropicService,
+	storageService service.StorageService,
+	logger *log.Logger,
+	modelRouter *service.ModelRouter,
+	openAIProvider openAIChatCompletionsForwarder,
+) *Handler {
 	conversationService := service.NewConversationService()
 
 	return &Handler{
@@ -38,14 +50,112 @@ func New(anthropicService service.AnthropicService, storageService service.Stora
 		storageService:      storageService,
 		conversationService: conversationService,
 		modelRouter:         modelRouter,
+		openAIProvider:      openAIProvider,
 		logger:              logger,
 	}
 }
 
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
-	// This endpoint is for compatibility but we're an Anthropic proxy
-	// Return a helpful error message
-	writeErrorResponse(w, "This is an Anthropic proxy. Please use the /v1/messages endpoint instead of /v1/chat/completions", http.StatusBadRequest)
+	bodyBytes := getBodyBytes(r)
+	if bodyBytes == nil {
+		writeErrorResponse(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	var requestBody map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &requestBody); err != nil {
+		writeErrorResponse(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	modelName, _ := requestBody["model"].(string)
+	isStreaming, _ := requestBody["stream"].(bool)
+	requestLog := &model.RequestLog{
+		RequestID:     generateRequestID(),
+		Timestamp:     time.Now().Format(time.RFC3339),
+		Method:        r.Method,
+		Endpoint:      r.URL.Path,
+		Headers:       SanitizeHeaders(r.Header),
+		Body:          requestBody,
+		Model:         modelName,
+		OriginalModel: modelName,
+		RoutedModel:   modelName,
+		UserAgent:     r.Header.Get("User-Agent"),
+		ContentType:   r.Header.Get("Content-Type"),
+	}
+	if _, err := h.storageService.SaveRequest(requestLog); err != nil {
+		h.logger.Printf("❌ Error saving OpenAI request: %v", err)
+	}
+
+	startTime := time.Now()
+	resp, err := h.openAIProvider.ForwardChatCompletions(r.Context(), r)
+	if err != nil {
+		h.logger.Printf("❌ Error forwarding OpenAI request: %v", err)
+		requestLog.Response = &model.ResponseLog{
+			StatusCode:   http.StatusBadGateway,
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			IsStreaming:  isStreaming,
+			CompletedAt:  time.Now().Format(time.RFC3339),
+		}
+		if updateErr := h.storageService.UpdateRequestWithResponse(requestLog); updateErr != nil {
+			h.logger.Printf("❌ Error updating failed OpenAI request: %v", updateErr)
+		}
+		writeErrorResponse(w, "Failed to forward request", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	h.copyOpenAIResponse(w, resp, requestLog, startTime, isStreaming)
+}
+
+func (h *Handler) copyOpenAIResponse(
+	w http.ResponseWriter,
+	resp *http.Response,
+	requestLog *model.RequestLog,
+	startTime time.Time,
+	isStreaming bool,
+) {
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	var captured bytes.Buffer
+	buffer := make([]byte, 32*1024)
+	for {
+		count, readErr := resp.Body.Read(buffer)
+		if count > 0 {
+			chunk := buffer[:count]
+			captured.Write(chunk)
+			if _, writeErr := w.Write(chunk); writeErr != nil {
+				break
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			h.logger.Printf("❌ Error reading OpenAI upstream response: %v", readErr)
+			break
+		}
+	}
+
+	requestLog.Response = &model.ResponseLog{
+		StatusCode:   resp.StatusCode,
+		Headers:      SanitizeHeaders(resp.Header),
+		BodyText:     captured.String(),
+		ResponseTime: time.Since(startTime).Milliseconds(),
+		IsStreaming:  isStreaming,
+		CompletedAt:  time.Now().Format(time.RFC3339),
+	}
+	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
+		h.logger.Printf("❌ Error updating OpenAI request response: %v", err)
+	}
 }
 
 func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {

@@ -22,13 +22,39 @@ type OpenAIProvider struct {
 	config *config.OpenAIProviderConfig
 }
 
-func NewOpenAIProvider(cfg *config.OpenAIProviderConfig) Provider {
+func NewOpenAIProvider(cfg *config.OpenAIProviderConfig) *OpenAIProvider {
 	return &OpenAIProvider{
 		client: &http.Client{
 			Timeout: 300 * time.Second, // 5 minutes timeout
 		},
 		config: cfg,
 	}
+}
+
+func (p *OpenAIProvider) ForwardChatCompletions(ctx context.Context, originalReq *http.Request) (*http.Response, error) {
+	baseURL, err := url.Parse(p.config.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse base URL '%s': %w", p.config.BaseURL, err)
+	}
+
+	proxyReq := originalReq.Clone(ctx)
+	proxyReq.RequestURI = ""
+	proxyReq.URL.Scheme = baseURL.Scheme
+	proxyReq.URL.Host = baseURL.Host
+	proxyReq.URL.Path = strings.TrimRight(baseURL.Path, "/") + "/chat/completions"
+	proxyReq.Host = baseURL.Host
+
+	if p.config.APIKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	}
+	proxyReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(proxyReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to forward chat completions request: %w", err)
+	}
+
+	return resp, nil
 }
 
 func (p *OpenAIProvider) Name() string {
