@@ -2,24 +2,32 @@
 
 ![Claude Code Proxy Demo](demo.gif)
 
-A transparent proxy for capturing and visualizing in-flight Claude Code requests and conversations, with optional agent routing to different LLM providers.
+A transparent proxy for forwarding, capturing, and visualizing Anthropic Messages,
+OpenAI Chat Completions, and OpenAI Responses API requests, with optional Claude
+Code subagent routing to different LLM providers.
 
 ## What It Does
 
 Claude Code Proxy serves three main purposes:
 
-1. **Claude Code Proxy**: Intercepts and monitors requests from Claude Code (claude.ai/code) to the Anthropic API, allowing you to see what Claude Code is doing in real-time
-2. **Conversation Viewer**: Displays and analyzes your Claude API conversations with a beautiful web interface
-3. **Agent Routing (Optional)**: Routes specific Claude Code agents to different LLM providers (e.g., route code-reviewer agent to GPT-4o)
+1. **Multi-protocol API Proxy**: Transparently forwards Anthropic Messages,
+   OpenAI Chat Completions, and OpenAI Responses requests.
+2. **Request Monitor**: Stores requests and responses in SQLite and displays
+   normalized messages, tool calls, tool results, model routing, latency, token
+   usage, and raw payloads in the web dashboard.
+3. **Agent Routing (Optional)**: Routes specific Claude Code subagents to
+   different LLM providers (for example, route `code-reviewer` to GPT-4o).
 
 ## Features
 
-- **Transparent Proxy**: Routes Claude Code requests through the monitor without disruption
+- **Transparent Proxy**: Forwards Anthropic and OpenAI-compatible requests without changing the client workflow
 - **Agent Routing (Optional)**: Map specific Claude Code agents to different LLM models
 - **Request Monitoring**: SQLite-based logging of all API interactions
-- **OpenAI Protocols**: Transparent `/v1/chat/completions` and `/v1/responses` forwarding
-- **Live Dashboard**: Real-time visualization of requests and responses
-- **Conversation Analysis**: View full conversation threads with tool usage
+- **Multi-protocol Endpoints**: Supports `/v1/messages`, `/v1/chat/completions`, and `/v1/responses`
+- **Web Dashboard**: Refreshable request history with detailed request and response visualization
+- **Request Filtering**: Filter history by time range, model, or request header
+- **Tool-call Inspection**: Normalized tool calls and tool results across supported protocols
+- **Streaming Inspection**: Stores raw SSE while presenting the completed structured response
 - **Easy Setup**: One-command startup for both services
 
 ## Quick Start
@@ -122,9 +130,9 @@ Claude Code Proxy serves three main purposes:
    
    Then run: `docker-compose up`
 
-### Using with Claude Code
+### Using the Proxy
 
-To use this proxy with Claude Code, set:
+For Claude Code or another Anthropic-compatible client, set:
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:3001
 ```
@@ -132,6 +140,27 @@ export ANTHROPIC_BASE_URL=http://localhost:3001
 Then launch Claude Code using the `claude` command.
 
 This will route Claude Code's requests through the proxy for monitoring.
+
+For an OpenAI-compatible client, set the client's base URL to:
+
+```text
+http://localhost:3001/v1
+```
+
+Configure this in the client itself. In the proxy process,
+`OPENAI_BASE_URL` means the upstream provider URL, not the local listening URL.
+
+The proxy accepts:
+
+- `POST /v1/messages` for the Anthropic Messages API
+- `POST /v1/chat/completions` for OpenAI Chat Completions
+- `POST /v1/responses` for the OpenAI Responses API
+- `GET /v1/models` for OpenAI-compatible model discovery
+
+Client authorization headers are forwarded by default. If
+`providers.openai.api_key` or `OPENAI_API_KEY` is configured, that key replaces
+the incoming authorization header for requests forwarded to the OpenAI
+provider.
 
 ### Access Points
 - **Web Dashboard**: http://localhost:5173
@@ -192,6 +221,10 @@ web:
 `/chat/completions` or `/responses` while preserving any gateway path prefix.
 Streaming events are stored as raw SSE and as a structured result only after a
 valid terminal event is received.
+
+`storage.max_capture_bytes` limits only the request and response data retained
+in SQLite; it does not truncate the proxied exchange. Set it to `0` for
+unlimited capture.
 
 > **Security:** Request and response headers are stored and displayed exactly
 > as received, including authorization and cookie headers. Protect access to
@@ -255,10 +288,19 @@ Use case: Different specialists for different tasks, optimizing for speed/cost/q
 ### Environment Variables
 
 Override config via environment:
-- `PORT` - Server port
-- `OPENAI_API_KEY` - OpenAI API key
-- `DB_PATH` - Database path
-- `SUBAGENT_MAPPINGS` - Comma-separated mappings (e.g., `"code-reviewer:gpt-4o,data-analyst:o3"`)
+
+- `PORT` - Proxy server port
+- `READ_TIMEOUT`, `WRITE_TIMEOUT`, `IDLE_TIMEOUT` - Go duration strings such as `30s` or `10m`
+- `ANTHROPIC_FORWARD_URL` - Anthropic upstream base URL
+- `ANTHROPIC_VERSION` - Anthropic API version
+- `ANTHROPIC_MAX_RETRIES` - Maximum Anthropic retry count
+- `OPENAI_BASE_URL` - OpenAI-compatible upstream API prefix
+- `OPENAI_API_KEY` - Optional upstream OpenAI API key
+- `DB_PATH` - SQLite database path
+
+Subagent mappings are configured under `subagents.mappings` in `config.yaml`.
+When running the web service separately, `BACKEND_URL` selects the proxy backend
+and defaults to `http://localhost:3001`.
 
 ### Docker Environment Variables
 
@@ -268,12 +310,14 @@ All environment variables can be configured when running the Docker container:
 |----------|---------|-------------|
 | `PORT` | `3001` | Proxy server port |
 | `WEB_PORT` | `5173` | Web dashboard port |
-| `READ_TIMEOUT` | `600` | Server read timeout (seconds) |
-| `WRITE_TIMEOUT` | `600` | Server write timeout (seconds) |
-| `IDLE_TIMEOUT` | `600` | Server idle timeout (seconds) |
+| `READ_TIMEOUT` | `600` | Server read timeout (seconds; Docker entrypoint converts it to a duration) |
+| `WRITE_TIMEOUT` | `600` | Server write timeout (seconds; Docker entrypoint converts it to a duration) |
+| `IDLE_TIMEOUT` | `600` | Server idle timeout (seconds; Docker entrypoint converts it to a duration) |
 | `ANTHROPIC_FORWARD_URL` | `https://api.anthropic.com` | Target Anthropic API URL |
 | `ANTHROPIC_VERSION` | `2023-06-01` | Anthropic API version |
 | `ANTHROPIC_MAX_RETRIES` | `3` | Maximum retry attempts |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Target OpenAI-compatible API prefix |
+| `OPENAI_API_KEY` | empty | Optional upstream OpenAI API key |
 | `DB_PATH` | `/app/data/requests.db` | SQLite database path |
 
 Example with custom configuration:
@@ -308,15 +352,17 @@ claude-code-proxy/
 
 ### Request Monitoring
 - All API requests logged to SQLite database
-- Searchable request history
+- Request history filtering by time range, model, and header
 - Request/response body inspection
-- Conversation threading
+- Protocol-aware message, tool-call, and tool-result rendering
+- Status, timing, token usage, and routing metadata
 
 ### Web Dashboard
-- Real-time request streaming
+- Refreshable captured-request history
 - Interactive request explorer
-- Conversation visualization
-- Performance metrics
+- Normalized Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses display
+- Raw request and response inspection
+- Optional raw SSE event viewer via `web.show_raw_stream_events`
 
 ## License
 
