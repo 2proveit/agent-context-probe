@@ -458,11 +458,6 @@ export default function Index() {
                             <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getProtocolBadgeClasses(request.endpoint)}`}>
                               {getAPIProtocol(request.endpoint)}
                             </span>
-                            {request.body?.stream && (
-                              <span className="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">
-                                stream
-                              </span>
-                            )}
                           </div>
                           
                           {/* Endpoint */}
