@@ -14,5 +14,5 @@ type StorageService interface {
 	EnsureDirectoryExists() error
 	GetRequestByShortID(shortID string) (*model.RequestLog, string, error)
 	GetConfig() *config.StorageConfig
-	GetAllRequests(modelFilter string) ([]*model.RequestLog, error)
+	GetAllRequests(modelFilter, headerFilter, sinceFilter string) ([]*model.RequestLog, error)
 }

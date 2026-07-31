@@ -368,13 +368,21 @@ func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get model filter from query parameters
-	modelFilter := r.URL.Query().Get("model")
+	modelFilter := strings.TrimSpace(r.URL.Query().Get("model"))
 	if modelFilter == "" {
 		modelFilter = "all"
 	}
+	headerFilter := strings.TrimSpace(r.URL.Query().Get("header"))
+	sinceFilter := strings.TrimSpace(r.URL.Query().Get("since"))
+	if sinceFilter != "" {
+		if _, err := time.Parse(time.RFC3339, sinceFilter); err != nil {
+			http.Error(w, "Invalid since filter", http.StatusBadRequest)
+			return
+		}
+	}
 
-	// Get all requests with model filter applied at storage level
-	allRequests, err := h.storageService.GetAllRequests(modelFilter)
+	// Apply filters at storage level before pagination.
+	allRequests, err := h.storageService.GetAllRequests(modelFilter, headerFilter, sinceFilter)
 	if err != nil {
 		log.Printf("Error getting requests: %v", err)
 		http.Error(w, "Failed to get requests", http.StatusInternalServerError)

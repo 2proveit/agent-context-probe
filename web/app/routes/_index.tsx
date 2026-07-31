@@ -104,23 +104,69 @@ interface Request {
   };
 }
 
+type TimeRange = "all" | "15m" | "1h" | "6h" | "24h" | "7d";
+
+interface RequestFilters {
+  timeRange: TimeRange;
+  model: string;
+  header: string;
+}
+
+const DEFAULT_FILTERS: RequestFilters = {
+  timeRange: "all",
+  model: "",
+  header: "",
+};
+
+const TIME_RANGE_MILLISECONDS: Partial<Record<TimeRange, number>> = {
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
+
+const getSinceTimestamp = (timeRange: TimeRange) => {
+  const duration = TIME_RANGE_MILLISECONDS[timeRange];
+  return duration ? new Date(Date.now() - duration).toISOString() : "";
+};
+
 export default function Index() {
   const [requests, setRequests] = useState<Request[]>([]);
+  const [totalRequests, setTotalRequests] = useState(0);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [requestsCurrentPage, setRequestsCurrentPage] = useState(1);
   const [hasMoreRequests, setHasMoreRequests] = useState(true);
+  const [draftFilters, setDraftFilters] = useState<RequestFilters>(DEFAULT_FILTERS);
+  const [appliedFilters, setAppliedFilters] = useState<RequestFilters>(DEFAULT_FILTERS);
+  const [appliedSince, setAppliedSince] = useState("");
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
   const itemsPerPage = 50;
 
-  const loadRequests = async (loadMore = false) => {
+  const loadRequests = async (loadMore = false, filters = appliedFilters) => {
     setIsFetching(true);
+    const since = loadMore ? appliedSince : getSinceTimestamp(filters.timeRange);
+    if (!loadMore) {
+      setRequestsCurrentPage(1);
+      setAppliedSince(since);
+    }
     const pageToFetch = loadMore ? requestsCurrentPage + 1 : 1;
     try {
       const url = new URL('/api/requests', window.location.origin);
       url.searchParams.append("page", pageToFetch.toString());
       url.searchParams.append("limit", itemsPerPage.toString());
+      if (filters.model.trim()) {
+        url.searchParams.append("model", filters.model.trim());
+      }
+      if (filters.header.trim()) {
+        url.searchParams.append("header", filters.header.trim());
+      }
+      if (since) {
+        url.searchParams.append("since", since);
+      }
 
       const response = await fetch(url.toString());
       if (!response.ok) {
@@ -133,6 +179,10 @@ export default function Index() {
         ...req,
         id: req.requestId ? `${req.requestId}_${index}` : `request_${index}` 
       }));
+      const total = typeof data.total === "number" ? data.total : mappedRequests.length;
+      const discoveredModels = mappedRequests.flatMap((request: Request) => (
+        [request.routedModel, request.body?.model, request.originalModel]
+      )).filter((model: string | undefined): model is string => Boolean(model));
       
       startTransition(() => {
         if (loadMore) {
@@ -140,13 +190,18 @@ export default function Index() {
         } else {
           setRequests(mappedRequests);
         }
+        setTotalRequests(total);
+        setModelOptions(previous => (
+          Array.from(new Set([...previous, ...discoveredModels])).sort((left, right) => left.localeCompare(right))
+        ));
         setRequestsCurrentPage(pageToFetch);
-        setHasMoreRequests(mappedRequests.length === itemsPerPage);
+        setHasMoreRequests(pageToFetch * itemsPerPage < total);
       });
     } catch (error) {
       console.error('Failed to load requests:', error);
       startTransition(() => {
         setRequests([]);
+        setTotalRequests(0);
       });
     } finally {
       setIsFetching(false);
@@ -161,6 +216,7 @@ export default function Index() {
       
       if (response.ok) {
         setRequests([]);
+        setTotalRequests(0);
         setRequestsCurrentPage(1);
         setHasMoreRequests(true);
       }
@@ -169,6 +225,27 @@ export default function Index() {
       setRequests([]);
     }
   };
+
+  const applyFilters = () => {
+    const normalizedFilters = {
+      ...draftFilters,
+      model: draftFilters.model.trim(),
+      header: draftFilters.header.trim(),
+    };
+    setDraftFilters(normalizedFilters);
+    setAppliedFilters(normalizedFilters);
+    loadRequests(false, normalizedFilters);
+  };
+
+  const resetFilters = () => {
+    setDraftFilters(DEFAULT_FILTERS);
+    setAppliedFilters(DEFAULT_FILTERS);
+    loadRequests(false, DEFAULT_FILTERS);
+  };
+
+  const hasActiveFilters = appliedFilters.timeRange !== "all"
+    || appliedFilters.model !== ""
+    || appliedFilters.header !== "";
 
   const getMethodColor = (method: string) => {
     const colors = {
@@ -385,15 +462,97 @@ export default function Index() {
         {/* Stats Grid */}
         <div className="mb-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total Requests
-                </p>
-                <p className="text-2xl font-semibold text-gray-900 mt-1">
-                  {requests.length}
-                </p>
+            <div className="flex flex-col gap-5">
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {hasActiveFilters ? "Matching Requests" : "Total Requests"}
+                  </p>
+                  <p className="text-2xl font-semibold text-gray-900 mt-1">
+                    {totalRequests}
+                  </p>
+                </div>
+                {totalRequests > requests.length && (
+                  <p className="text-xs text-gray-500">
+                    {requests.length} loaded
+                  </p>
+                )}
               </div>
+              <form
+                className="grid grid-cols-1 gap-3 border-t border-gray-100 pt-4 md:grid-cols-[160px_minmax(180px,1fr)_minmax(240px,1.4fr)_auto]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  applyFilters();
+                }}
+              >
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-gray-600">Time range</span>
+                  <select
+                    value={draftFilters.timeRange}
+                    onChange={(event) => setDraftFilters(previous => ({
+                      ...previous,
+                      timeRange: event.target.value as TimeRange,
+                    }))}
+                    className="h-9 w-full rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">Any time</option>
+                    <option value="15m">Last 15 minutes</option>
+                    <option value="1h">Last hour</option>
+                    <option value="6h">Last 6 hours</option>
+                    <option value="24h">Last 24 hours</option>
+                    <option value="7d">Last 7 days</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-gray-600">Model</span>
+                  <input
+                    type="text"
+                    list="request-model-options"
+                    value={draftFilters.model}
+                    onChange={(event) => setDraftFilters(previous => ({
+                      ...previous,
+                      model: event.target.value,
+                    }))}
+                    placeholder="e.g. deepseek"
+                    className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <datalist id="request-model-options">
+                    {modelOptions.map(model => (
+                      <option key={model} value={model} />
+                    ))}
+                  </datalist>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-gray-600">Request header</span>
+                  <input
+                    type="text"
+                    value={draftFilters.header}
+                    onChange={(event) => setDraftFilters(previous => ({
+                      ...previous,
+                      header: event.target.value,
+                    }))}
+                    placeholder="Header name or value"
+                    className="h-9 w-full rounded-md border border-gray-300 px-3 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
+                <div className="flex items-end gap-2">
+                  <button
+                    type="submit"
+                    disabled={isFetching}
+                    className="h-9 rounded-md bg-gray-900 px-4 text-xs font-medium text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    disabled={isFetching}
+                    className="h-9 rounded-md border border-gray-300 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -413,8 +572,14 @@ export default function Index() {
                 </div>
               ) : requests.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
-                  <h3 className="text-sm font-medium text-gray-600 mb-1">No requests found</h3>
-                  <p className="text-xs text-gray-500">Make sure you have set <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">ANTHROPIC_BASE_URL</code> to point at the proxy</p>
+                  <h3 className="text-sm font-medium text-gray-600 mb-1">
+                    {hasActiveFilters ? "No requests match these filters" : "No requests found"}
+                  </h3>
+                  {hasActiveFilters ? (
+                    <p className="text-xs text-gray-500">Try a wider time range or clear one of the filters.</p>
+                  ) : (
+                    <p className="text-xs text-gray-500">Make sure you have set <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">ANTHROPIC_BASE_URL</code> to point at the proxy</p>
+                  )}
                 </div>
               ) : (
                 <>

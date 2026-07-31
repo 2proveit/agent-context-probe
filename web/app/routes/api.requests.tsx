@@ -5,6 +5,8 @@ export const loader: LoaderFunction = async ({ request }) => {
   try {
     const url = new URL(request.url);
     const modelFilter = url.searchParams.get("model");
+    const headerFilter = url.searchParams.get("header");
+    const sinceFilter = url.searchParams.get("since");
     const page = url.searchParams.get("page");
     const limit = url.searchParams.get("limit");
 
@@ -13,6 +15,12 @@ export const loader: LoaderFunction = async ({ request }) => {
     const backendUrl = new URL('/api/requests', backendBaseUrl);
     if (modelFilter) {
       backendUrl.searchParams.append('model', modelFilter);
+    }
+    if (headerFilter) {
+      backendUrl.searchParams.append('header', headerFilter);
+    }
+    if (sinceFilter) {
+      backendUrl.searchParams.append('since', sinceFilter);
     }
     if (page) {
       backendUrl.searchParams.append('page', page);

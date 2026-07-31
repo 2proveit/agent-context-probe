@@ -299,17 +299,32 @@ func (s *sqliteStorageService) GetConfig() *config.StorageConfig {
 	return s.config
 }
 
-func (s *sqliteStorageService) GetAllRequests(modelFilter string) ([]*model.RequestLog, error) {
+func (s *sqliteStorageService) GetAllRequests(modelFilter, headerFilter, sinceFilter string) ([]*model.RequestLog, error) {
 	query := `
 		SELECT id, timestamp, method, endpoint, headers, body, model, user_agent, content_type, prompt_grade, response, original_model, routed_model
 		FROM requests
 	`
 	args := []interface{}{}
+	conditions := []string{}
 
 	if modelFilter != "" && modelFilter != "all" {
-		query += " WHERE LOWER(model) LIKE ?"
-		args = append(args, "%"+strings.ToLower(modelFilter)+"%")
+		modelPattern := "%" + escapeLike(strings.ToLower(modelFilter)) + "%"
+		conditions = append(conditions, `(LOWER(model) LIKE ? ESCAPE '\' OR LOWER(original_model) LIKE ? ESCAPE '\' OR LOWER(routed_model) LIKE ? ESCAPE '\')`)
+		args = append(args, modelPattern, modelPattern, modelPattern)
+	}
 
+	if headerFilter != "" {
+		conditions = append(conditions, `LOWER(headers) LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(strings.ToLower(headerFilter))+"%")
+	}
+
+	if sinceFilter != "" {
+		conditions = append(conditions, "datetime(timestamp) >= datetime(?)")
+		args = append(args, sinceFilter)
+	}
+
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	query += " ORDER BY timestamp DESC"
@@ -377,6 +392,14 @@ func (s *sqliteStorageService) GetAllRequests(modelFilter string) ([]*model.Requ
 	}
 
 	return requests, nil
+}
+
+func escapeLike(value string) string {
+	return strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	).Replace(value)
 }
 
 func (s *sqliteStorageService) Close() error {
