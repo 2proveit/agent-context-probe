@@ -1,6 +1,6 @@
-# Claude Code Proxy
+# Agent Context Probe
 
-![Claude Code Proxy Demo](demo.gif)
+![Agent Context Probe Demo](demo.gif)
 
 A transparent proxy for forwarding, capturing, and visualizing Anthropic Messages,
 OpenAI Chat Completions, and OpenAI Responses API requests, with optional Claude
@@ -8,7 +8,7 @@ Code subagent routing to different LLM providers.
 
 ## What It Does
 
-Claude Code Proxy serves three main purposes:
+Agent Context Probe serves three main purposes:
 
 1. **Multi-protocol API Proxy**: Transparently forwards Anthropic Messages,
    OpenAI Chat Completions, and OpenAI Responses requests.
@@ -43,8 +43,8 @@ Claude Code Proxy serves three main purposes:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/seifghazi/claude-code-proxy.git
-   cd claude-code-proxy
+   git clone https://github.com/2proveit/agent-context-probe.git
+   cd agent-context-probe
    ```
 
 2. **Configure the proxy**
@@ -69,8 +69,8 @@ Claude Code Proxy serves three main purposes:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/seifghazi/claude-code-proxy.git
-   cd claude-code-proxy
+   git clone https://github.com/2proveit/agent-context-probe.git
+   cd agent-context-probe
    ```
 
 2. **Configure the proxy**
@@ -82,10 +82,10 @@ Claude Code Proxy serves three main purposes:
 3. **Build and run with Docker**
    ```bash
    # Build the image
-   docker build -t claude-code-proxy .
+   docker build -t agent-context-probe .
    
    # Run with default settings
-   docker run -p 3001:3001 -p 5173:5173 claude-code-proxy
+   docker run -p 3001:3001 -p 5173:5173 agent-context-probe
    ```
 
 4. **Run with persistent data and custom configuration**
@@ -97,7 +97,7 @@ Claude Code Proxy serves three main purposes:
    docker run -p 3001:3001 -p 5173:5173 \
      -v ./data:/app/data \
      -v ./config.yaml:/app/config.yaml:ro \
-     claude-code-proxy
+     agent-context-probe
    
    # Option 2: Run with environment variables
    docker run -p 3001:3001 -p 5173:5173 \
@@ -105,7 +105,7 @@ Claude Code Proxy serves three main purposes:
      -e ANTHROPIC_FORWARD_URL=https://api.anthropic.com \
      -e PORT=3001 \
      -e WEB_PORT=5173 \
-     claude-code-proxy
+     agent-context-probe
    ```
 
 5. **Docker Compose (alternative)**
@@ -113,7 +113,7 @@ Claude Code Proxy serves three main purposes:
    # docker-compose.yml
    version: '3.8'
    services:
-     claude-code-proxy:
+     agent-context-probe:
        build: .
        ports:
          - "3001:3001"
@@ -328,14 +328,14 @@ docker run -p 3001:3001 -p 5173:5173 \
   -e WEB_PORT=3000 \
   -e ANTHROPIC_FORWARD_URL=https://api.anthropic.com \
   -e DB_PATH=/app/data/custom.db \
-  claude-code-proxy
+  agent-context-probe
 ```
 
 
 ## Project Structure
 
 ```
-claude-code-proxy/
+agent-context-probe/
 ├── proxy/                  # Go proxy server
 │   ├── cmd/               # Application entry points
 │   ├── internal/          # Internal packages
