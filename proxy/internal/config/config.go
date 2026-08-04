@@ -64,7 +64,9 @@ type StorageConfig struct {
 }
 
 type WebConfig struct {
-	ShowRawStreamEvents bool `yaml:"show_raw_stream_events"`
+	ShowRawStreamEvents        bool `yaml:"show_raw_stream_events"`
+	RawRequestMaxDisplayChars  int  `yaml:"raw_request_max_display_chars"`
+	RawResponseMaxDisplayChars int  `yaml:"raw_response_max_display_chars"`
 }
 
 type SubagentsConfig struct {
@@ -209,6 +211,12 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.Storage.MaxCaptureBytes < 0 {
 		return fmt.Errorf("storage.max_capture_bytes must be zero or greater")
+	}
+	if c.Web.RawRequestMaxDisplayChars < 0 {
+		return fmt.Errorf("web.raw_request_max_display_chars must be zero or greater")
+	}
+	if c.Web.RawResponseMaxDisplayChars < 0 {
+		return fmt.Errorf("web.raw_response_max_display_chars must be zero or greater")
 	}
 	return nil
 }

@@ -56,6 +56,11 @@ web:
   # Store raw SSE data but hide its viewer unless explicitly enabled.
   show_raw_stream_events: false
 
+  # Maximum characters rendered for raw request/response values in the web UI.
+  # Set to 0 for unlimited display. These settings do not change SQLite capture.
+  raw_request_max_display_chars: 0
+  raw_response_max_display_chars: 0
+
 # Subagent Configuration (Optional)
 # Enable this feature if you want to route specific Claude Code agents to different LLM providers
 # For subagent setup instructions, see: https://docs.anthropic.com/en/docs/claude-code/sub-agents

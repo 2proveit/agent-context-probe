@@ -27,8 +27,10 @@ type openAIForwarder interface {
 }
 
 type Options struct {
-	MaxCaptureBytes     int64
-	ShowRawStreamEvents bool
+	MaxCaptureBytes            int64
+	ShowRawStreamEvents        bool
+	RawRequestMaxDisplayChars  int
+	RawResponseMaxDisplayChars int
 }
 
 type Handler struct {
@@ -237,8 +239,10 @@ func (h *Handler) copyOpenAIResponse(
 }
 
 func (h *Handler) UIConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSONResponse(w, map[string]bool{
-		"showRawStreamEvents": h.options.ShowRawStreamEvents,
+	writeJSONResponse(w, map[string]interface{}{
+		"showRawStreamEvents":        h.options.ShowRawStreamEvents,
+		"rawRequestMaxDisplayChars":  h.options.RawRequestMaxDisplayChars,
+		"rawResponseMaxDisplayChars": h.options.RawResponseMaxDisplayChars,
 	})
 }
 

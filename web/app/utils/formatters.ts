@@ -24,13 +24,27 @@ export function formatValue(value: any): string {
 export function formatJSON(obj: any, maxLength: number = 1000): string {
   try {
     const jsonString = JSON.stringify(obj, null, 2);
-    if (jsonString.length > maxLength) {
-      return jsonString.substring(0, maxLength) + '...';
-    }
-    return jsonString;
+    return limitDisplayText(jsonString, maxLength);
   } catch (error) {
     return String(obj);
   }
+}
+
+/**
+ * Limits text for display only. Zero keeps the complete captured value.
+ */
+export function limitDisplayText(text: string, maxLength: number = 0): string {
+  if (maxLength <= 0 || text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '...';
+}
+
+/**
+ * Normalizes UI display limits received from the backend. Invalid values are unlimited.
+ */
+export function normalizeDisplayLimit(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0;
 }
 
 /**

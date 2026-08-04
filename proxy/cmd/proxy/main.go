@@ -53,8 +53,10 @@ func main() {
 		modelRouter,
 		openAIProvider,
 		handler.Options{
-			MaxCaptureBytes:     cfg.Storage.MaxCaptureBytes,
-			ShowRawStreamEvents: cfg.Web.ShowRawStreamEvents,
+			MaxCaptureBytes:            cfg.Storage.MaxCaptureBytes,
+			ShowRawStreamEvents:        cfg.Web.ShowRawStreamEvents,
+			RawRequestMaxDisplayChars:  cfg.Web.RawRequestMaxDisplayChars,
+			RawResponseMaxDisplayChars: cfg.Web.RawResponseMaxDisplayChars,
 		},
 	)
 

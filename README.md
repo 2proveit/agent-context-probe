@@ -215,6 +215,8 @@ storage:
 
 web:
   show_raw_stream_events: false
+  raw_request_max_display_chars: 0
+  raw_response_max_display_chars: 0
 ```
 
 `providers.openai.base_url` is an API prefix. The proxy appends
@@ -225,6 +227,11 @@ valid terminal event is received.
 `storage.max_capture_bytes` limits only the request and response data retained
 in SQLite; it does not truncate the proxied exchange. Set it to `0` for
 unlimited capture.
+
+`web.raw_request_max_display_chars` and
+`web.raw_response_max_display_chars` limit only the number of characters
+rendered in the web UI. Both default to `0` (unlimited), and copy actions still
+use the complete value retained in SQLite.
 
 > **Security:** Request and response headers are stored and displayed exactly
 > as received, including authorization and cookie headers. Protect access to
@@ -363,6 +370,7 @@ agent-context-probe/
 - Normalized Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses display
 - Raw request and response inspection
 - Optional raw SSE event viewer via `web.show_raw_stream_events`
+- Independently configurable raw request/response display limits (unlimited by default)
 
 ## License
 

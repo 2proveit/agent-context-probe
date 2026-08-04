@@ -21,7 +21,7 @@ import {
   Wrench
 } from 'lucide-react';
 import { MessageContent } from './MessageContent';
-import { formatJSON } from '../utils/formatters';
+import { formatJSON, limitDisplayText, normalizeDisplayLimit } from '../utils/formatters';
 import {
   getAPIProtocol,
   getProviderName,
@@ -102,12 +102,22 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
   });
   const [copied, setCopied] = useState<Record<string, boolean>>({});
   const [showRawStreamEvents, setShowRawStreamEvents] = useState(false);
+  const [rawRequestMaxDisplayChars, setRawRequestMaxDisplayChars] = useState(0);
+  const [rawResponseMaxDisplayChars, setRawResponseMaxDisplayChars] = useState(0);
 
   useEffect(() => {
     fetch('/api/ui-config')
       .then(response => response.ok ? response.json() : null)
-      .then(config => setShowRawStreamEvents(Boolean(config?.showRawStreamEvents)))
-      .catch(() => setShowRawStreamEvents(false));
+      .then(config => {
+        setShowRawStreamEvents(Boolean(config?.showRawStreamEvents));
+        setRawRequestMaxDisplayChars(normalizeDisplayLimit(config?.rawRequestMaxDisplayChars));
+        setRawResponseMaxDisplayChars(normalizeDisplayLimit(config?.rawResponseMaxDisplayChars));
+      })
+      .catch(() => {
+        setShowRawStreamEvents(false);
+        setRawRequestMaxDisplayChars(0);
+        setRawResponseMaxDisplayChars(0);
+      });
   }, []);
 
   const protocol = getAPIProtocol(request.endpoint);
@@ -443,7 +453,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
             {expandedSections.rawRequest && (
               <div className="p-6">
                 <pre className="text-xs text-gray-700 overflow-auto max-h-96 bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  {formatJSON(request.body)}
+                  {formatJSON(request.body, rawRequestMaxDisplayChars)}
                 </pre>
               </div>
             )}
@@ -457,6 +467,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
           response={request.response}
           endpoint={request.endpoint}
           showRawStreamEvents={showRawStreamEvents}
+          rawResponseMaxDisplayChars={rawResponseMaxDisplayChars}
         />
       )}
 
@@ -606,10 +617,12 @@ function ResponseDetails({
   response,
   endpoint,
   showRawStreamEvents,
+  rawResponseMaxDisplayChars,
 }: {
   response: NonNullable<Request['response']>;
   endpoint: string;
   showRawStreamEvents: boolean;
+  rawResponseMaxDisplayChars: number;
 }) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<Record<string, boolean>>({});
@@ -724,6 +737,13 @@ function ResponseDetails({
   const statusColors = getStatusColor(response.statusCode);
   const completedAt = response.completedAt ? new Date(response.completedAt).toLocaleString() : 'Unknown';
   const usage = getUsage(response.body);
+  const completeResponseBody = response.body
+    ? formatJSON(response.body, 0)
+    : (response.bodyText || '');
+  const displayedResponseBody = limitDisplayText(
+    completeResponseBody,
+    rawResponseMaxDisplayChars,
+  );
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm border-l-4 border-l-blue-500">
@@ -934,7 +954,7 @@ function ResponseDetails({
                       <span className="text-sm font-medium text-gray-700">Response</span>
                       <button
                         onClick={() => handleCopy(
-                          response.body ? formatJSON(response.body) : (response.bodyText || ''), 
+                          completeResponseBody,
                           'responseBody'
                         )}
                         className="p-1 text-gray-500 hover:text-gray-700 transition-colors"
@@ -948,7 +968,7 @@ function ResponseDetails({
                       </button>
                     </div>
                     <pre className="text-xs text-gray-700 overflow-x-auto max-h-96 overflow-y-auto">
-                      {response.body ? formatJSON(response.body) : response.bodyText}
+                      {displayedResponseBody}
                     </pre>
                   </div>
                 </div>
@@ -975,7 +995,7 @@ function ResponseDetails({
               </div>
               {expandedSections.rawSSE && (
                 <pre className="m-4 text-xs text-gray-600 overflow-auto max-h-96 bg-gray-100 rounded p-3 font-mono">
-                  {response.bodyText}
+                  {limitDisplayText(response.bodyText, rawResponseMaxDisplayChars)}
                 </pre>
               )}
             </div>
@@ -1071,7 +1091,7 @@ function ResponseDetails({
                             </button>
                           </div>
                           <pre className="text-xs text-gray-600 overflow-x-auto max-h-64 overflow-y-auto bg-gray-100 rounded p-2 font-mono">
-                            {parsed.rawData}
+                            {limitDisplayText(parsed.rawData, rawResponseMaxDisplayChars)}
                           </pre>
                         </div>
                       )}

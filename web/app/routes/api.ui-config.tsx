@@ -11,6 +11,10 @@ export const loader: LoaderFunction = async () => {
     return json(await response.json());
   } catch (error) {
     console.error("Failed to fetch UI config:", error);
-    return json({ showRawStreamEvents: false });
+    return json({
+      showRawStreamEvents: false,
+      rawRequestMaxDisplayChars: 0,
+      rawResponseMaxDisplayChars: 0,
+    });
   }
 };
