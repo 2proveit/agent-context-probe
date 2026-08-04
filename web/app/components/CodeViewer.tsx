@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Copy, Check, FileCode, Download, Maximize2, X } from 'lucide-react';
+import { tokenizeCodeLine } from '../utils/toolResultRendering';
 
 interface CodeViewerProps {
   code: string;
@@ -81,41 +82,6 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
   };
 
   const detectedLanguage = language || getLanguageFromFileName(fileName);
-
-  // Basic syntax highlighting for common tokens
-  const highlightCode = (code: string): string => {
-    // Escape HTML
-    let highlighted = code
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-    // Common patterns for many languages
-    const patterns = [
-      // Strings
-      { regex: /(["'`])(?:(?=(\\?))\2.)*?\1/g, class: 'text-green-400' },
-      // Comments
-      { regex: /(\/\/.*$)/gm, class: 'text-gray-500 italic' },
-      { regex: /(\/\*[\s\S]*?\*\/)/g, class: 'text-gray-500 italic' },
-      { regex: /(#.*$)/gm, class: 'text-gray-500 italic' },
-      // Numbers
-      { regex: /\b(\d+\.?\d*)\b/g, class: 'text-purple-400' },
-      // Keywords (common across many languages)
-      { regex: /\b(function|const|let|var|if|else|for|while|return|class|import|export|from|async|await|def|elif|except|finally|lambda|with|as|raise|del|global|nonlocal|assert|break|continue|try|catch|throw|new|this|super|extends|implements|interface|abstract|static|public|private|protected|void|int|string|boolean|float|double|char|long|short|byte|enum|struct|typedef|union|namespace|using|package|goto|switch|case|default)\b/g, class: 'text-blue-400' },
-      // Boolean and null values
-      { regex: /\b(true|false|null|undefined|nil|None|True|False)\b/g, class: 'text-orange-400' },
-      // Function calls (basic)
-      { regex: /(\w+)(?=\s*\()/g, class: 'text-yellow-400' },
-      // Types/Classes (PascalCase)
-      { regex: /\b([A-Z][a-zA-Z0-9]*)\b/g, class: 'text-cyan-400' },
-    ];
-
-    patterns.forEach(({ regex, class: className }) => {
-      highlighted = highlighted.replace(regex, `<span class="${className}">$&</span>`);
-    });
-
-    return highlighted;
-  };
 
   const handleCopy = async () => {
     try {
@@ -199,7 +165,13 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
                   {idx + 1}
                 </td>
                 <td className="px-4 py-0.5 whitespace-pre text-gray-300">
-                  <span dangerouslySetInnerHTML={{ __html: highlightCode(line) }} />
+                  <span>
+                    {tokenizeCodeLine(line).map((token, tokenIndex) => (
+                      token.className ? (
+                        <span key={tokenIndex} className={token.className}>{token.text}</span>
+                      ) : token.text
+                    ))}
+                  </span>
                 </td>
               </tr>
             ))}
