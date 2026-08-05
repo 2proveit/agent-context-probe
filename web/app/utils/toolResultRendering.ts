@@ -36,7 +36,7 @@ export function isCodeToolResult({ content, toolName, fileName }: CodeResultOpti
 function appendToken(tokens: CodeToken[], text: string, className?: string) {
   if (!text) return;
   const previous = tokens[tokens.length - 1];
-  if (previous?.className === className) {
+  if (previous && previous.className === className) {
     previous.text += text;
     return;
   }

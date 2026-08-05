@@ -39,3 +39,16 @@ test('tokenization classifies code without changing its text', () => {
     ],
   );
 });
+
+test('tokenization accepts lines whose first token is unstyled', () => {
+  const lines = [
+    'plain text',
+    '  indentedValue = 1;',
+    '= assignment',
+  ];
+
+  for (const line of lines) {
+    const tokens = tokenizeCodeLine(line);
+    assert.equal(tokens.map(token => token.text).join(''), line);
+  }
+});

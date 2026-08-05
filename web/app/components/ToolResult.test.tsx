@@ -23,3 +23,12 @@ test('code highlighting never rewrites generated class attributes', () => {
   assert.doesNotMatch(markup, /text-gray-class/);
   assert.doesNotMatch(markup, /<span <span/);
 });
+
+test('CodeViewer renders lines that begin with unstyled text', () => {
+  const content = 'plain text\n  indentedValue = 1;\n= assignment';
+  const markup = renderToStaticMarkup(<CodeViewer code={content} />);
+
+  assert.match(markup, /plain text/);
+  assert.match(markup, /indentedValue/);
+  assert.match(markup, /assignment/);
+});
