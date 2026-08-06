@@ -68,8 +68,10 @@ subagents:
   # Enable subagent routing (default: false)
   enable: false
   
-  # Maps subagent types to specific models
+  # Maps Claude Code subagent names to specific models.
   # Only used when enable: true
+  # This is not a global incoming-model-to-upstream-model alias map.
+  # Request bodies must use the standard "model" field; "model_name" is not recognized.
   mappings:
     # Code review specialist (example)
     # code-reviewer: "gpt-4o"
@@ -101,6 +103,5 @@ subagents:
 # Storage:
 #   DB_PATH                  - Database file path
 #
-# Subagents:
-#   SUBAGENT_MAPPINGS        - Comma-separated subagent:model pairs
-#                              Example: "code-reviewer:claude-3-5-sonnet"
+# Subagent mappings currently have no environment-variable override and must be
+# configured in the subagents.mappings section above.
