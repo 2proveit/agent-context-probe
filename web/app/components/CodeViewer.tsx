@@ -109,25 +109,25 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
   const lineCount = lines.length;
 
   const CodeDisplay = ({ inModal = false }: { inModal?: boolean }) => (
-    <div className={`rounded-lg border border-gray-700 bg-gray-900 overflow-hidden ${inModal ? '' : 'max-h-[600px]'}`}>
+    <div className={`rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm ${inModal ? '' : 'max-h-[600px]'}`}>
       {/* Header */}
-      <div className="px-4 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
+      <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <FileCode className="w-4 h-4 text-blue-400" />
-          <span className="text-sm text-gray-300 font-mono">
+          <FileCode className="w-4 h-4 text-blue-600" />
+          <span className="text-sm text-slate-700 font-mono">
             {fileName || 'Untitled'}
           </span>
-          <span className="text-xs text-gray-500 bg-gray-700 px-2 py-1 rounded">
+          <span className="text-xs text-slate-600 bg-slate-200/70 px-2 py-1 rounded">
             {detectedLanguage}
           </span>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-slate-500">
             {lineCount} lines
           </span>
         </div>
         <div className="flex items-center space-x-2">
           <button
             onClick={handleDownload}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
             title="Download file"
           >
             <Download className="w-4 h-4" />
@@ -135,7 +135,7 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
           {!inModal && (
             <button
               onClick={() => setIsFullscreen(true)}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+              className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
               title="View fullscreen"
             >
               <Maximize2 className="w-4 h-4" />
@@ -143,11 +143,11 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
           )}
           <button
             onClick={handleCopy}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
             title="Copy code"
           >
             {copied ? (
-              <Check className="w-4 h-4 text-green-400" />
+              <Check className="w-4 h-4 text-emerald-600" />
             ) : (
               <Copy className="w-4 h-4" />
             )}
@@ -160,11 +160,11 @@ export function CodeViewer({ code, fileName, language }: CodeViewerProps) {
         <table className="w-full text-sm font-mono">
           <tbody>
             {lines.map((line, idx) => (
-              <tr key={idx} className="hover:bg-gray-800/50">
-                <td className="px-4 py-0.5 text-right text-gray-500 select-none w-12 align-top">
+              <tr key={idx} className="hover:bg-blue-50/60">
+                <td className="px-4 py-0.5 text-right text-slate-400 bg-slate-50/70 border-r border-slate-100 select-none w-12 align-top">
                   {idx + 1}
                 </td>
-                <td className="px-4 py-0.5 whitespace-pre text-gray-300">
+                <td className="px-4 py-0.5 whitespace-pre text-slate-700">
                   <span>
                     {tokenizeCodeLine(line).map((token, tokenIndex) => (
                       token.className ? (

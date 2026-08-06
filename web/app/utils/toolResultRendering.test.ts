@@ -32,10 +32,10 @@ test('tokenization classifies code without changing its text', () => {
   assert.deepEqual(
     tokens.filter(token => token.className).map(token => [token.text, token.className]),
     [
-      ['const', 'text-blue-400'],
-      ['buildResult', 'text-yellow-400'],
-      ['500', 'text-purple-400'],
-      ['true', 'text-orange-400'],
+      ['const', 'text-blue-700'],
+      ['buildResult', 'text-amber-700'],
+      ['500', 'text-violet-700'],
+      ['true', 'text-orange-700'],
     ],
   );
 });

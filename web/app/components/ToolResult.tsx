@@ -131,7 +131,7 @@ export function ToolResult({ content, toolId, toolName, isError = false }: ToolR
             </div>
             {toolName && (
               <div className="mt-1">
-                <span className="font-mono text-sm text-emerald-700 bg-white px-2 py-1 rounded-md border border-emerald-200 font-medium">
+                <span className="inline-flex items-center font-mono text-base text-emerald-700 bg-white px-3 py-1.5 rounded-lg border border-emerald-200 font-medium">
                   {toolName}
                 </span>
               </div>

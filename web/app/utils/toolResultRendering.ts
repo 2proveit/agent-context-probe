@@ -75,7 +75,7 @@ export function tokenizeCodeLine(line: string): CodeToken[] {
         }
         end += 1;
       }
-      appendToken(tokens, line.slice(index, end), 'text-green-400');
+      appendToken(tokens, line.slice(index, end), 'text-emerald-700');
       index = end;
       continue;
     }
@@ -83,7 +83,7 @@ export function tokenizeCodeLine(line: string): CodeToken[] {
     const remaining = line.slice(index);
     const numberMatch = remaining.match(/^\d+(?:\.\d+)?\b/);
     if (numberMatch) {
-      appendToken(tokens, numberMatch[0], 'text-purple-400');
+      appendToken(tokens, numberMatch[0], 'text-violet-700');
       index += numberMatch[0].length;
       continue;
     }
@@ -95,13 +95,13 @@ export function tokenizeCodeLine(line: string): CodeToken[] {
       let className: string | undefined;
 
       if (KEYWORDS.has(identifier)) {
-        className = 'text-blue-400';
+        className = 'text-blue-700';
       } else if (BOOLEAN_OR_NULL.has(identifier)) {
-        className = 'text-orange-400';
+        className = 'text-orange-700';
       } else if (/^\s*\(/.test(followingText)) {
-        className = 'text-yellow-400';
+        className = 'text-amber-700';
       } else if (/^[A-Z][a-zA-Z0-9]*$/.test(identifier)) {
-        className = 'text-cyan-400';
+        className = 'text-cyan-700';
       }
 
       appendToken(tokens, identifier, className);

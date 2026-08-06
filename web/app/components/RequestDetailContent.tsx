@@ -445,9 +445,28 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                   <FileText className="w-5 h-5 text-gray-600" />
                   <span>Raw Request JSON</span>
                 </h4>
-                <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
-                  expandedSections.rawRequest ? 'rotate-180' : ''
-                }`} />
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCopy(formatJSON(request.body), 'rawRequest');
+                    }}
+                    className="inline-flex items-center space-x-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    title="Copy raw request JSON"
+                    aria-label="Copy raw request JSON"
+                  >
+                    {copied.rawRequest ? (
+                      <Check className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                    <span>{copied.rawRequest ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                    expandedSections.rawRequest ? 'rotate-180' : ''
+                  }`} />
+                </div>
               </div>
             </div>
             {expandedSections.rawRequest && (
