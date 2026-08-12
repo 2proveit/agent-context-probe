@@ -21,7 +21,7 @@ import {
   Wrench
 } from 'lucide-react';
 import { MessageContent } from './MessageContent';
-import { formatJSON, limitDisplayText, normalizeDisplayLimit } from '../utils/formatters';
+import { formatJSON, formatJSONForCopy, limitDisplayText, normalizeDisplayLimit } from '../utils/formatters';
 import {
   getAPIProtocol,
   getProviderName,
@@ -30,7 +30,8 @@ import {
 } from '../utils/models';
 
 interface Request {
-  id: number;
+  id: string;
+  requestId: string;
   timestamp: string;
   method: string;
   endpoint: string;
@@ -450,7 +451,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleCopy(formatJSON(request.body), 'rawRequest');
+                      handleCopy(formatJSONForCopy(request.body), 'rawRequest');
                     }}
                     className="inline-flex items-center space-x-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                     title="Copy raw request JSON"

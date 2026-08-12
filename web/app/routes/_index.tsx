@@ -43,7 +43,8 @@ export const meta: MetaFunction = () => {
 };
 
 interface Request {
-  id: number;
+  id: string;
+  requestId: string;
   timestamp: string;
   method: string;
   endpoint: string;
@@ -144,6 +145,7 @@ export default function Index() {
   const [appliedFilters, setAppliedFilters] = useState<RequestFilters>(DEFAULT_FILTERS);
   const [appliedSince, setAppliedSince] = useState("");
   const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
   const itemsPerPage = 50;
 
   const loadRequests = async (loadMore = false, filters = appliedFilters) => {
@@ -302,11 +304,23 @@ export default function Index() {
     return parts.length > 0 ? parts.join(' • ') : '📡 API request';
   };
 
-  const showRequestDetails = (requestId: number) => {
+  const showRequestDetails = (requestId: string) => {
     const request = requests.find(r => r.id === requestId);
     if (request) {
       setSelectedRequest(request);
       setIsModalOpen(true);
+    }
+  };
+
+  const copyRequestId = async (requestId: string) => {
+    try {
+      await navigator.clipboard.writeText(requestId);
+      setCopiedRequestId(requestId);
+      setTimeout(() => {
+        setCopiedRequestId(current => current === requestId ? null : current);
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to copy request ID:', error);
     }
   };
 
@@ -378,7 +392,7 @@ export default function Index() {
            request.endpoint.includes('/messages');
   };
 
-  const gradeRequest = async (requestId: number) => {
+  const gradeRequest = async (requestId: string) => {
     const request = requests.find(r => r.id === requestId);
     if (!request || !canGradeRequest(request)) return;
 
@@ -655,12 +669,31 @@ export default function Index() {
                             )}
                           </div>
                         </div>
-                        <div className="flex-shrink-0 text-right">
-                          <div className="text-xs text-gray-500">
-                            {new Date(request.timestamp).toLocaleDateString()}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {new Date(request.timestamp).toLocaleTimeString()}
+                        <div className="flex flex-shrink-0 items-start space-x-3">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              copyRequestId(request.requestId);
+                            }}
+                            className="inline-flex items-center space-x-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                            title={`Copy request ID: ${request.requestId}`}
+                            aria-label={`Copy request ID ${request.requestId}`}
+                          >
+                            {copiedRequestId === request.requestId ? (
+                              <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                            <span>{copiedRequestId === request.requestId ? 'Copied' : 'Copy ID'}</span>
+                          </button>
+                          <div className="text-right">
+                            <div className="text-xs text-gray-500">
+                              {new Date(request.timestamp).toLocaleDateString()}
+                            </div>
+                            <div className="text-xs text-gray-400">
+                              {new Date(request.timestamp).toLocaleTimeString()}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -693,12 +726,29 @@ export default function Index() {
                   <FileText className="w-5 h-5 text-blue-600" />
                   <h3 className="text-lg font-semibold text-gray-900">Request Details</h3>
                 </div>
-                <button 
-                  onClick={closeModal}
-                  className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => copyRequestId(selectedRequest.requestId)}
+                    className="inline-flex items-center space-x-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    title={`Copy request ID: ${selectedRequest.requestId}`}
+                    aria-label={`Copy request ID ${selectedRequest.requestId}`}
+                  >
+                    {copiedRequestId === selectedRequest.requestId ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                    <span>{copiedRequestId === selectedRequest.requestId ? 'Copied' : 'Copy ID'}</span>
+                  </button>
+                  <button
+                    onClick={closeModal}
+                    className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-lg"
+                    aria-label="Close request details"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
             </div>
             <div className="p-6 overflow-y-auto max-h-[calc(90vh-100px)]">

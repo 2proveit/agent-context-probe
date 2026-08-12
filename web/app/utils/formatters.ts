@@ -31,6 +31,13 @@ export function formatJSON(obj: any, maxLength: number = 1000): string {
 }
 
 /**
+ * Formats complete JSON for clipboard operations without applying display limits.
+ */
+export function formatJSONForCopy(obj: unknown): string {
+  return formatJSON(obj, 0);
+}
+
+/**
  * Limits text for display only. Zero keeps the complete captured value.
  */
 export function limitDisplayText(text: string, maxLength: number = 0): string {
