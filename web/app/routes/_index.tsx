@@ -1,34 +1,21 @@
 import type { MetaFunction } from "@remix-run/node";
 import { useState, useEffect, useTransition } from "react";
 import { 
-  Activity, 
   RefreshCw, 
   Trash2, 
   List,
+  MessagesSquare,
   FileText,
   X,
-  ChevronRight,
-  ChevronDown,
-  Inbox,
-  Wrench,
-  Bot,
-  User,
-  Settings,
-  Users,
-  Target,
-  Cpu,
-  CheckCircle,
-  ClipboardCheck,
-  BarChart3,
-  MessageSquare,
   Copy,
   Check,
-  Lightbulb,
   Loader2,
   ArrowLeftRight
 } from "lucide-react";
 
 import RequestDetailContent from "../components/RequestDetailContent";
+import SessionView from "../components/SessionView";
+import type { RequestRecord, SessionDetail, SessionSummary } from "../types";
 import {
   getAPIProtocol,
   getProtocolBadgeClasses,
@@ -42,70 +29,8 @@ export const meta: MetaFunction = () => {
   ];
 };
 
-interface Request {
-  id: string;
-  requestId: string;
-  timestamp: string;
-  method: string;
-  endpoint: string;
-  headers: Record<string, string[]>;
-  originalModel?: string;
-  routedModel?: string;
-  body?: {
-    model?: string;
-    messages?: Array<{
-      role: string;
-      content: any;
-    }>;
-    system?: Array<{
-      text: string;
-      type: string;
-      cache_control?: { type: string };
-    }>;
-    tools?: Array<{
-      name: string;
-      description: string;
-      input_schema?: {
-        type: string;
-        properties?: Record<string, any>;
-        required?: string[];
-      };
-    }>;
-    max_tokens?: number;
-    temperature?: number;
-    stream?: boolean;
-  };
-  response?: {
-    statusCode: number;
-    headers: Record<string, string[]>;
-    body?: {
-      usage?: {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_creation_input_tokens?: number;
-        cache_read_input_tokens?: number;
-        service_tier?: string;
-      };
-      [key: string]: any;
-    };
-    bodyText?: string;
-    responseTime: number;
-    streamingChunks?: string[];
-    isStreaming: boolean;
-    completedAt: string;
-    streamError?: string;
-    truncated?: boolean;
-  };
-  promptGrade?: {
-    score: number;
-    criteria: Record<string, { score: number; feedback: string }>;
-    feedback: string;
-    improvedPrompt: string;
-    gradingTimestamp: string;
-  };
-}
-
 type TimeRange = "all" | "15m" | "1h" | "6h" | "24h" | "7d";
+type ViewMode = "sessions" | "requests";
 
 interface RequestFilters {
   timeRange: TimeRange;
@@ -133,9 +58,16 @@ const getSinceTimestamp = (timeRange: TimeRange) => {
 };
 
 export default function Index() {
-  const [requests, setRequests] = useState<Request[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>("sessions");
+  const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [totalRequests, setTotalRequests] = useState(0);
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null);
+  const [isFetchingSessions, setIsFetchingSessions] = useState(false);
+  const [isFetchingSessionDetail, setIsFetchingSessionDetail] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<RequestRecord | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -147,6 +79,72 @@ export default function Index() {
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
   const itemsPerPage = 50;
+
+  const loadSessionDetail = async (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    setIsFetchingSessionDetail(true);
+    try {
+      const url = new URL('/api/sessions', window.location.origin);
+      url.searchParams.set('session', sessionId);
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      const normalize = (detail: SessionDetail): SessionDetail => ({
+        ...detail,
+        requests: (detail.requests ?? []).map(request => ({
+          ...request,
+          id: request.id || request.requestId,
+        })),
+        children: detail.children?.map(normalize),
+      });
+      setSessionDetail(data.session ? normalize(data.session) : null);
+    } catch (error) {
+      console.error('Failed to load session details:', error);
+      setSessionDetail(null);
+    } finally {
+      setIsFetchingSessionDetail(false);
+    }
+  };
+
+  const loadSessions = async (filters = appliedFilters) => {
+    setIsFetchingSessions(true);
+    const since = getSinceTimestamp(filters.timeRange);
+    try {
+      const url = new URL('/api/sessions', window.location.origin);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('limit', '100');
+      if (filters.model.trim()) url.searchParams.set('model', filters.model.trim());
+      if (filters.header.trim()) url.searchParams.set('header', filters.header.trim());
+      if (since) url.searchParams.set('since', since);
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      const nextSessions: SessionSummary[] = data.sessions ?? [];
+      setSessions(nextSessions);
+      setTotalSessions(typeof data.total === 'number' ? data.total : nextSessions.length);
+      setModelOptions(previous => Array.from(new Set([
+        ...previous,
+        ...nextSessions.flatMap(session => [
+          session.model,
+          ...(session.children ?? []).map(child => child.model),
+        ]).filter((model): model is string => Boolean(model)),
+      ])).sort((left, right) => left.localeCompare(right)));
+
+      const nextSelected = nextSessions.some(session => session.sessionId === selectedSessionId)
+        ? selectedSessionId
+        : nextSessions[0]?.sessionId ?? null;
+      setSelectedSessionId(nextSelected);
+      if (nextSelected) await loadSessionDetail(nextSelected);
+      else setSessionDetail(null);
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
+      setSessions([]);
+      setTotalSessions(0);
+      setSessionDetail(null);
+    } finally {
+      setIsFetchingSessions(false);
+    }
+  };
 
   const loadRequests = async (loadMore = false, filters = appliedFilters) => {
     setIsFetching(true);
@@ -176,13 +174,13 @@ export default function Index() {
       }
       
       const data = await response.json();
-      const requests = data.requests || [];
-      const mappedRequests = requests.map((req: any, index: number) => ({
+      const rawRequests: Array<Omit<RequestRecord, 'id'>> = data.requests || [];
+      const mappedRequests = rawRequests.map((req, index: number) => ({
         ...req,
         id: req.requestId ? `${req.requestId}_${index}` : `request_${index}` 
       }));
       const total = typeof data.total === "number" ? data.total : mappedRequests.length;
-      const discoveredModels = mappedRequests.flatMap((request: Request) => (
+      const discoveredModels = mappedRequests.flatMap((request: RequestRecord) => (
         [request.routedModel, request.body?.model, request.originalModel]
       )).filter((model: string | undefined): model is string => Boolean(model));
       
@@ -219,6 +217,10 @@ export default function Index() {
       if (response.ok) {
         setRequests([]);
         setTotalRequests(0);
+        setSessions([]);
+        setTotalSessions(0);
+        setSelectedSessionId(null);
+        setSessionDetail(null);
         setRequestsCurrentPage(1);
         setHasMoreRequests(true);
       }
@@ -236,73 +238,20 @@ export default function Index() {
     };
     setDraftFilters(normalizedFilters);
     setAppliedFilters(normalizedFilters);
-    loadRequests(false, normalizedFilters);
+    if (viewMode === "sessions") loadSessions(normalizedFilters);
+    else loadRequests(false, normalizedFilters);
   };
 
   const resetFilters = () => {
     setDraftFilters(DEFAULT_FILTERS);
     setAppliedFilters(DEFAULT_FILTERS);
-    loadRequests(false, DEFAULT_FILTERS);
+    if (viewMode === "sessions") loadSessions(DEFAULT_FILTERS);
+    else loadRequests(false, DEFAULT_FILTERS);
   };
 
   const hasActiveFilters = appliedFilters.timeRange !== "all"
     || appliedFilters.model !== ""
     || appliedFilters.header !== "";
-
-  const getMethodColor = (method: string) => {
-    const colors = {
-      'GET': 'bg-green-50 text-green-700 border border-green-200',
-      'POST': 'bg-blue-50 text-blue-700 border border-blue-200',
-      'PUT': 'bg-yellow-50 text-yellow-700 border border-yellow-200',
-      'DELETE': 'bg-red-50 text-red-700 border border-red-200'
-    };
-    return colors[method as keyof typeof colors] || 'bg-gray-50 text-gray-700 border border-gray-200';
-  };
-
-  const getRequestSummary = (request: Request) => {
-    const parts = [];
-    
-    // Add token usage if available
-    if (request.response?.body?.usage) {
-      const usage = request.response.body.usage;
-      const inputTokens = usage.input_tokens || 0;
-      const outputTokens = usage.output_tokens || 0;
-      const totalTokens = inputTokens + outputTokens;
-      
-      if (totalTokens > 0) {
-        parts.push(`🪙 ${totalTokens.toLocaleString()} tokens`);
-        
-        if (usage.cache_read_input_tokens) {
-          parts.push(`💾 ${usage.cache_read_input_tokens.toLocaleString()} cached`);
-        }
-      }
-    }
-    
-    // Add response time if available
-    if (request.response?.responseTime) {
-      const seconds = (request.response.responseTime / 1000).toFixed(1);
-      parts.push(`⏱️ ${seconds}s`);
-    }
-    
-    // Add model if available (use routed model if different from original)
-    const model = request.routedModel || request.body?.model;
-    if (model) {
-      const modelShort = model.includes('opus') ? 'Opus' :
-                         model.includes('sonnet') ? 'Sonnet' :
-                         model.includes('haiku') ? 'Haiku' : 
-                         model.includes('gpt-4o') ? 'gpt-4o' :
-                         model.includes('o3') ? 'o3' :
-                         model.includes('o3-mini') ? 'o3-mini' : 'Model';
-      parts.push(`🤖 ${modelShort}`);
-      
-      // Show routing info if model was routed
-      if (request.routedModel && request.originalModel && request.routedModel !== request.originalModel) {
-        parts.push(`→ routed`);
-      }
-    }
-    
-    return parts.length > 0 ? parts.join(' • ') : '📡 API request';
-  };
 
   const showRequestDetails = (requestId: string) => {
     const request = requests.find(r => r.id === requestId);
@@ -310,6 +259,11 @@ export default function Index() {
       setSelectedRequest(request);
       setIsModalOpen(true);
     }
+  };
+
+  const showSessionRequestDetails = (request: RequestRecord) => {
+    setSelectedRequest({ ...request, id: request.id || request.requestId });
+    setIsModalOpen(true);
   };
 
   const copyRequestId = async (requestId: string) => {
@@ -329,63 +283,7 @@ export default function Index() {
     setSelectedRequest(null);
   };
 
-  const getToolStats = () => {
-    let toolDefinitions = 0;
-    let toolCalls = 0;
-    
-    requests.forEach(req => {
-      if (req.body) {
-        // Count tool definitions in system prompts
-        if (req.body.system) {
-          req.body.system.forEach(sys => {
-            if (sys.text && sys.text.includes('<functions>')) {
-              const functionMatches = [...sys.text.matchAll(/<function>([\s\S]*?)<\/function>/g)];
-              toolDefinitions += functionMatches.length;
-            }
-          });
-        }
-        
-        // Count actual tool calls in messages
-        if (req.body.messages) {
-          req.body.messages.forEach(msg => {
-            if (msg.content && Array.isArray(msg.content)) {
-              msg.content.forEach((contentPart: any) => {
-                if (contentPart.type === 'tool_use') {
-                  toolCalls++;
-                }
-                if (contentPart.type === 'text' && contentPart.text && contentPart.text.includes('<functions>')) {
-                  const functionMatches = [...contentPart.text.matchAll(/<function>([\s\S]*?)<\/function>/g)];
-                  toolDefinitions += functionMatches.length;
-                }
-              });
-            }
-          });
-        }
-      }
-    });
-    
-    return `${toolCalls} calls / ${toolDefinitions} tools`;
-  };
-
-  const getPromptGradeStats = () => {
-    let totalGrades = 0;
-    let gradeCount = 0;
-    
-    requests.forEach(req => {
-      if (req.promptGrade && req.promptGrade.score) {
-        totalGrades += req.promptGrade.score;
-        gradeCount++;
-      }
-    });
-    
-    if (gradeCount > 0) {
-      const avgGrade = (totalGrades / gradeCount).toFixed(1);
-      return `${avgGrade}/5`;
-    }
-    return '-/5';
-  };
-
-  const canGradeRequest = (request: Request) => {
+  const canGradeRequest = (request: RequestRecord) => {
     return request.body && 
            request.body.messages && 
            request.body.messages.some(msg => msg.role === 'user') &&
@@ -427,7 +325,7 @@ export default function Index() {
   };
 
   useEffect(() => {
-    loadRequests();
+    loadSessions(DEFAULT_FILTERS);
   }, []);
 
   // Handle escape key to close modals
@@ -451,10 +349,44 @@ export default function Index() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-end">
+        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:block">
+              <p className="text-sm font-semibold text-gray-900">Agent Context Probe</p>
+              <p className="text-[11px] text-gray-400">LLM session inspector</p>
+            </div>
+            <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-1" role="tablist" aria-label="Monitor view">
+              <button
+                type="button"
+                role="tab"
+                data-testid="sessions-tab"
+                aria-selected={viewMode === 'sessions'}
+                onClick={() => {
+                  setViewMode('sessions');
+                  if (!sessions.length) loadSessions(appliedFilters);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${viewMode === 'sessions' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+              >
+                <MessagesSquare className="h-3.5 w-3.5" /> Sessions
+              </button>
+              <button
+                type="button"
+                role="tab"
+                data-testid="requests-tab"
+                aria-selected={viewMode === 'requests'}
+                onClick={() => {
+                  setViewMode('requests');
+                  if (!requests.length) loadRequests(false, appliedFilters);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${viewMode === 'requests' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+              >
+                <List className="h-3.5 w-3.5" /> Requests
+              </button>
+            </div>
+          </div>
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => loadRequests()}
+              onClick={() => viewMode === 'sessions' ? loadSessions(appliedFilters) : loadRequests()}
               className="p-1.5 text-gray-600 hover:bg-gray-100 rounded transition-colors"
               title="Refresh"
             >
@@ -472,7 +404,7 @@ export default function Index() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      <main className="max-w-[1600px] mx-auto px-6 py-8 space-y-8">
         {/* Stats Grid */}
         <div className="mb-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4">
@@ -480,15 +412,17 @@ export default function Index() {
               <div className="flex items-end justify-between">
                 <div>
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    {hasActiveFilters ? "Matching Requests" : "Total Requests"}
+                    {hasActiveFilters
+                      ? `Matching ${viewMode === 'sessions' ? 'Sessions' : 'Requests'}`
+                      : `Total ${viewMode === 'sessions' ? 'Sessions' : 'Requests'}`}
                   </p>
                   <p className="text-2xl font-semibold text-gray-900 mt-1">
-                    {totalRequests}
+                    {viewMode === 'sessions' ? totalSessions : totalRequests}
                   </p>
                 </div>
-                {totalRequests > requests.length && (
+                {(viewMode === 'sessions' ? totalSessions > sessions.length : totalRequests > requests.length) && (
                   <p className="text-xs text-gray-500">
-                    {requests.length} loaded
+                    {viewMode === 'sessions' ? sessions.length : requests.length} loaded
                   </p>
                 )}
               </div>
@@ -552,7 +486,7 @@ export default function Index() {
                 <div className="flex items-end gap-2">
                   <button
                     type="submit"
-                    disabled={isFetching}
+                    disabled={isFetching || isFetchingSessions}
                     className="h-9 rounded-md bg-gray-900 px-4 text-xs font-medium text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Apply
@@ -560,7 +494,7 @@ export default function Index() {
                   <button
                     type="button"
                     onClick={resetFilters}
-                    disabled={isFetching}
+                    disabled={isFetching || isFetchingSessions}
                     className="h-9 rounded-md border border-gray-300 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Reset
@@ -571,8 +505,20 @@ export default function Index() {
           </div>
         </div>
 
-        {/* Request History */}
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        {viewMode === 'sessions' ? (
+          <SessionView
+            sessions={sessions}
+            total={totalSessions}
+            selectedSessionId={selectedSessionId}
+            detail={sessionDetail}
+            isLoadingList={isFetchingSessions}
+            isLoadingDetail={isFetchingSessionDetail}
+            onSelectSession={loadSessionDetail}
+            onOpenRequest={showSessionRequestDetails}
+          />
+        ) : (
+          /* Request History */
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
             <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Request History</h2>
@@ -713,7 +659,8 @@ export default function Index() {
                 </>
               )}
             </div>
-        </div>
+          </div>
+        )}
       </main>
 
       {/* Request Detail Modal */}

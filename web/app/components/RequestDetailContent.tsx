@@ -28,71 +28,10 @@ import {
   getProtocolBadgeClasses,
   getUsage,
 } from '../utils/models';
-
-interface Request {
-  id: string;
-  requestId: string;
-  timestamp: string;
-  method: string;
-  endpoint: string;
-  headers: Record<string, string[]>;
-  originalModel?: string;
-  routedModel?: string;
-  body?: {
-    [key: string]: any;
-    model?: string;
-    messages?: Array<{
-      role: string;
-      content: any;
-      tool_calls?: any[];
-      tool_call_id?: string;
-    }>;
-    system?: Array<{
-      text: string;
-      type: string;
-      cache_control?: { type: string };
-    }>;
-    tools?: Array<{
-      name: string;
-      description: string;
-      input_schema?: {
-        type: string;
-        properties?: Record<string, any>;
-        required?: string[];
-      };
-    }>;
-    max_tokens?: number;
-    max_output_tokens?: number;
-    temperature?: number;
-    stream?: boolean;
-    instructions?: any;
-    input?: any;
-  };
-  response?: {
-    statusCode: number;
-    headers: Record<string, string[]>;
-    body?: any;
-    bodyText?: string;
-    responseTime: number;
-    streamingChunks?: string[];
-    isStreaming: boolean;
-    completedAt: string;
-    truncated?: boolean;
-    capturedBytes?: number;
-    responseBytes?: number;
-    streamError?: string;
-  };
-  promptGrade?: {
-    score: number;
-    criteria: Record<string, { score: number; feedback: string }>;
-    feedback: string;
-    improvedPrompt: string;
-    gradingTimestamp: string;
-  };
-}
+import type { RequestRecord } from '../types';
 
 interface RequestDetailContentProps {
-  request: Request;
+  request: RequestRecord;
   onGrade: () => void;
 }
 
@@ -153,7 +92,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
     return colors[method as keyof typeof colors] || 'bg-gray-50 text-gray-700 border border-gray-200';
   };
 
-  const canGradeRequest = (request: Request) => {
+  const canGradeRequest = (request: RequestRecord) => {
     return request.body && 
            request.body.messages && 
            request.body.messages.some(msg => msg.role === 'user') &&
@@ -499,7 +438,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
   );
 }
 
-function normalizeRequestMessages(body?: Request['body']): Array<{ role: string; content: any }> {
+function normalizeRequestMessages(body?: RequestRecord['body']): Array<{ role: string; content: any }> {
   if (!body) return [];
   if (Array.isArray(body.messages)) {
     const toolNamesById = new Map<string, string>();
@@ -639,7 +578,7 @@ function ResponseDetails({
   showRawStreamEvents,
   rawResponseMaxDisplayChars,
 }: {
-  response: NonNullable<Request['response']>;
+  response: NonNullable<RequestRecord['response']>;
   endpoint: string;
   showRawStreamEvents: boolean;
   rawResponseMaxDisplayChars: number;

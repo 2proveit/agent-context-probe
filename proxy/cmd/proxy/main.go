@@ -80,6 +80,7 @@ func main() {
 	r.HandleFunc("/ui", h.UI).Methods("GET")
 	r.HandleFunc("/api/requests", h.GetRequests).Methods("GET")
 	r.HandleFunc("/api/requests", h.DeleteRequests).Methods("DELETE")
+	r.HandleFunc("/api/sessions", h.GetSessions).Methods("GET")
 	r.HandleFunc("/api/ui-config", h.UIConfig).Methods("GET")
 
 	r.NotFoundHandler = http.HandlerFunc(h.NotFound)
@@ -103,6 +104,7 @@ func main() {
 		logger.Printf("🎨 Web UI available at:")
 		logger.Printf("   - GET  http://localhost:%s/ (Request Visualizer)", cfg.Server.Port)
 		logger.Printf("   - GET  http://localhost:%s/api/requests (Request API)", cfg.Server.Port)
+		logger.Printf("   - GET  http://localhost:%s/api/sessions (Session API)", cfg.Server.Port)
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("❌ Server failed to start: %v", err)
