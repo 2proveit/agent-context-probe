@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- OpenAI and Anthropic response blocks are runtime JSON. */
 
+import { useState } from 'react';
 import {
   AlertCircle,
   Bot,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock3,
   FileText,
@@ -33,6 +35,11 @@ interface TimelineToolCall {
   id?: string;
   name: string;
   arguments?: unknown;
+}
+
+interface TimelineToolResult {
+  content: unknown;
+  isError: boolean;
 }
 
 const STATUS_STYLES: Record<string, { label: string; className: string; dot: string }> = {
@@ -150,6 +157,53 @@ function responseToolCalls(request: RequestRecord): TimelineToolCall[] {
   return calls;
 }
 
+function toolResults(requests: RequestRecord[]) {
+  const results = new Map<string, TimelineToolResult>();
+  const save = (id: unknown, content: unknown, isError = false) => {
+    if (typeof id === 'string' && id) results.set(id, { content, isError });
+  };
+
+  for (const request of requests) {
+    for (const message of request.body?.messages ?? []) {
+      if (message.role === 'tool') {
+        save(message.tool_call_id, message.content);
+      }
+      if (!Array.isArray(message.content)) continue;
+      for (const block of message.content) {
+        if (block?.type === 'tool_result') {
+          save(block.tool_use_id, block.content, Boolean(block.is_error));
+        }
+      }
+    }
+
+    const input = request.body?.input;
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item?.type === 'function_call_output') {
+          save(item.call_id ?? item.id, item.output, Boolean(item.is_error));
+        }
+      }
+    }
+  }
+  return results;
+}
+
+function formatPayload(value: unknown) {
+  if (value === undefined || value === null || value === '') return 'No output captured';
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function summarizeArguments(call: TimelineToolCall) {
   const args = call.arguments;
   if (!args || typeof args !== 'object') return typeof args === 'string' ? args : '';
@@ -258,6 +312,91 @@ function TimelineItem({
   );
 }
 
+function ToolTimelineItem({
+  icon,
+  call,
+  result,
+  request,
+}: {
+  icon: React.ReactNode;
+  call: TimelineToolCall;
+  result?: TimelineToolResult;
+  request: RequestRecord;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(false);
+  const usage = getUsage(request.response?.body);
+  const task = call.name === 'task';
+  const resultDot = result?.isError ? 'bg-red-500' : result ? 'bg-emerald-500' : 'bg-gray-300';
+
+  return (
+    <div
+      data-tool-call-id={call.id || `${request.requestId}:${call.name}`}
+      data-expanded={expanded ? 'true' : 'false'}
+      className={`overflow-hidden rounded-lg border transition ${
+        expanded
+          ? task ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200 bg-white shadow-sm'
+          : task ? 'border-blue-200 bg-blue-50/50 hover:bg-blue-50' : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded(current => !current)}
+        aria-expanded={expanded}
+        className="group flex w-full items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-500">{icon}</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="shrink-0 text-sm font-medium text-gray-900">{call.name}</span>
+            <span className="truncate text-sm text-gray-500">— {summarizeArguments(call)}</span>
+          </span>
+        </span>
+        <span className="hidden shrink-0 items-center gap-3 text-xs text-gray-400 sm:flex">
+          {usage ? <span>~{formatCompactNumber(usage.output)} tokens</span> : null}
+          {request.response?.responseTime !== undefined ? <span>{formatDuration(request.response.responseTime)}</span> : null}
+          <span className={`h-2 w-2 rounded-full ${resultDot}`} />
+          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-gray-200 px-4 pb-4 pt-3 sm:ml-11 sm:mr-3">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Input</div>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-700 scrollbar-custom">
+            {formatPayload(call.arguments)}
+          </pre>
+
+          <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <button
+              type="button"
+              onClick={() => setOutputExpanded(current => !current)}
+              aria-expanded={outputExpanded}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-gray-600 hover:bg-gray-50"
+            >
+              <ChevronRight className={`h-4 w-4 transition-transform ${outputExpanded ? 'rotate-90' : ''}`} />
+              <span className="font-medium">Output</span>
+              <span className={`h-2 w-2 rounded-full ${resultDot}`} />
+              {!result ? <span className="text-xs text-gray-400">not captured</span> : null}
+            </button>
+            {outputExpanded ? (
+              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words border-t p-4 font-mono text-xs leading-5 scrollbar-custom ${
+                result?.isError ? 'border-red-100 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 text-gray-700'
+              }`}>
+                {formatPayload(result?.content)}
+              </pre>
+            ) : null}
+          </div>
+
+          {request.response?.responseTime !== undefined ? (
+            <div className="mt-2 text-xs text-gray-400">Duration: {formatDuration(request.response.responseTime)}</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SessionTimeline({
   detail,
   onOpenRequest,
@@ -271,6 +410,7 @@ function SessionTimeline({
   const summary = detail.summary;
   const style = statusStyle(summary.status);
   const totalTokens = summary.inputTokens + summary.outputTokens;
+  const results = toolResults(detail.requests);
 
   return (
     <section className={child ? 'rounded-xl border border-gray-200 bg-white' : ''}>
@@ -332,14 +472,12 @@ function SessionTimeline({
                     />
                   ) : null}
                   {tools.map((tool, toolIndex) => (
-                    <TimelineItem
+                    <ToolTimelineItem
                       key={tool.id || `${tool.name}-${toolIndex}`}
                       icon={tool.name === 'task' ? <GitBranch className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
-                      title={tool.name}
-                      description={summarizeArguments(tool)}
+                      call={tool}
+                      result={tool.id ? results.get(tool.id) : undefined}
                       request={request}
-                      onOpenRequest={onOpenRequest}
-                      tone={tool.name === 'task' ? 'task' : 'default'}
                     />
                   ))}
                   {request.response?.streamError ? (
