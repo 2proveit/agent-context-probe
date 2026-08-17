@@ -1,0 +1,3 @@
+npm --prefix web run lint-staged
+npm --prefix web run typecheck
+npm --prefix web test

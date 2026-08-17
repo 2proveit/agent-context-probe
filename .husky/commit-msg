@@ -1,0 +1,8 @@
+commit_msg_file="$1"
+
+case "$commit_msg_file" in
+  /*) ;;
+  *) commit_msg_file="$(pwd)/$commit_msg_file" ;;
+esac
+
+npm --prefix web run commitlint -- --edit "$commit_msg_file"
