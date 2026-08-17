@@ -312,22 +312,89 @@ function TimelineItem({
   );
 }
 
+function OutputTimelineItem({
+  text,
+  request,
+}: {
+  text: string;
+  request: RequestRecord;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const usage = getUsage(request.response?.body);
+
+  return (
+    <div
+      data-output-request-id={request.requestId}
+      data-expanded={expanded ? 'true' : 'false'}
+      className={`overflow-hidden rounded-lg border transition ${
+        expanded ? 'border-gray-200 bg-white shadow-sm' : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded(current => !current)}
+        aria-expanded={expanded}
+        className="group flex w-full items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-500">
+          <MessageSquareText className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="shrink-0 text-sm font-medium text-gray-900">Output</span>
+            <span className="truncate text-sm text-gray-500">— {text.replace(/\s+/g, ' ').slice(0, 160)}</span>
+          </span>
+        </span>
+        <span className="hidden shrink-0 items-center gap-3 text-xs text-gray-400 sm:flex">
+          {usage ? <span>~{formatCompactNumber(usage.output)} tokens</span> : null}
+          {request.response?.responseTime !== undefined ? <span>{formatDuration(request.response.responseTime)}</span> : null}
+          <span className={`h-2 w-2 rounded-full ${request.response?.streamError ? 'bg-red-500' : 'bg-emerald-500'}`} />
+          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-gray-200 px-4 pb-4 pt-3 sm:ml-11 sm:mr-3">
+          <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Model output</div>
+          <div className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-700 scrollbar-custom">
+            {text}
+          </div>
+          {request.response?.responseTime !== undefined ? (
+            <div className="mt-2 text-xs text-gray-400">Duration: {formatDuration(request.response.responseTime)}</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ToolTimelineItem({
   icon,
   call,
   result,
   request,
+  delegatedSession,
+  onOpenRequest,
 }: {
   icon: React.ReactNode;
   call: TimelineToolCall;
   result?: TimelineToolResult;
   request: RequestRecord;
+  delegatedSession?: SessionDetail;
+  onOpenRequest: (request: RequestRecord) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
   const usage = getUsage(request.response?.body);
   const task = call.name === 'task';
-  const resultDot = result?.isError ? 'bg-red-500' : result ? 'bg-emerald-500' : 'bg-gray-300';
+  const delegatedStatus = delegatedSession?.summary.status;
+  const resultDot = delegatedStatus === 'error' || delegatedStatus === 'interrupted' || result?.isError
+    ? 'bg-red-500'
+    : delegatedStatus === 'completed' || result
+      ? 'bg-emerald-500'
+      : delegatedSession
+        ? 'bg-amber-400'
+        : 'bg-gray-300';
 
   return (
     <div
@@ -391,6 +458,13 @@ function ToolTimelineItem({
           {request.response?.responseTime !== undefined ? (
             <div className="mt-2 text-xs text-gray-400">Duration: {formatDuration(request.response.responseTime)}</div>
           ) : null}
+
+          {task && delegatedSession ? (
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Delegated subagent</div>
+              <SessionTimeline detail={delegatedSession} onOpenRequest={onOpenRequest} child />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -411,9 +485,17 @@ function SessionTimeline({
   const style = statusStyle(summary.status);
   const totalTokens = summary.inputTokens + summary.outputTokens;
   const results = toolResults(detail.requests);
+  const childByTaskCall = new Map(
+    (detail.children ?? [])
+      .filter(childDetail => Boolean(childDetail.summary.taskCallId))
+      .map(childDetail => [childDetail.summary.taskCallId as string, childDetail]),
+  );
 
   return (
-    <section className={child ? 'rounded-xl border border-gray-200 bg-white' : ''}>
+    <section
+      data-session-timeline-id={summary.sessionId}
+      className={child ? 'rounded-xl border border-gray-200 bg-white' : ''}
+    >
       <div className={`flex flex-col gap-3 ${child ? 'border-b border-gray-200 px-5 py-4' : 'pb-5'} sm:flex-row sm:items-center sm:justify-between`}>
         <div className="flex min-w-0 items-center gap-3">
           <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${child ? 'bg-blue-50 text-blue-600' : 'bg-gray-900 text-white'}`}>
@@ -463,12 +545,9 @@ function SessionTimeline({
                 </div>
                 <div className="space-y-1">
                   {text ? (
-                    <TimelineItem
-                      icon={<MessageSquareText className="h-4 w-4" />}
-                      title="Output"
-                      description={text.replace(/\s+/g, ' ').slice(0, 160)}
+                    <OutputTimelineItem
+                      text={text}
                       request={request}
-                      onOpenRequest={onOpenRequest}
                     />
                   ) : null}
                   {tools.map((tool, toolIndex) => (
@@ -478,6 +557,8 @@ function SessionTimeline({
                       call={tool}
                       result={tool.id ? results.get(tool.id) : undefined}
                       request={request}
+                      delegatedSession={tool.id ? childByTaskCall.get(tool.id) : undefined}
+                      onOpenRequest={onOpenRequest}
                     />
                   ))}
                   {request.response?.streamError ? (
@@ -573,14 +654,6 @@ export default function SessionView({
               </header>
               <div className="space-y-6 px-6 py-6">
                 <SessionTimeline detail={detail} onOpenRequest={onOpenRequest} />
-                {detail.children?.map(childDetail => (
-                  <SessionTimeline
-                    key={childDetail.summary.sessionId}
-                    detail={childDetail}
-                    onOpenRequest={onOpenRequest}
-                    child
-                  />
-                ))}
               </div>
             </div>
           ) : (
