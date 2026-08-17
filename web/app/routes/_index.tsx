@@ -380,7 +380,7 @@ export default function Index() {
                 }}
                 className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${viewMode === 'requests' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
               >
-                <List className="h-3.5 w-3.5" /> Requests
+                <List className="h-3.5 w-3.5" /> Model Calls
               </button>
             </div>
           </div>
@@ -395,7 +395,7 @@ export default function Index() {
             <button
               onClick={clearRequests}
               className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
-              title="Clear all requests"
+              title="Clear all model calls"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -413,8 +413,8 @@ export default function Index() {
                 <div>
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
                     {hasActiveFilters
-                      ? `Matching ${viewMode === 'sessions' ? 'Sessions' : 'Requests'}`
-                      : `Total ${viewMode === 'sessions' ? 'Sessions' : 'Requests'}`}
+                      ? `Matching ${viewMode === 'sessions' ? 'Sessions' : 'Model Calls'}`
+                      : `Total ${viewMode === 'sessions' ? 'Sessions' : 'Model Calls'}`}
                   </p>
                   <p className="text-2xl font-semibold text-gray-900 mt-1">
                     {viewMode === 'sessions' ? totalSessions : totalRequests}
@@ -522,8 +522,8 @@ export default function Index() {
             <div className="bg-gray-50/70">
               <div className="mx-auto flex h-16 w-full max-w-4xl items-center px-4">
                 <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-900">Requests</h2>
-                  <p className="mt-0.5 text-xs text-gray-400">{totalRequests} captured requests</p>
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-900">Model Calls</h2>
+                  <p className="mt-0.5 text-xs text-gray-400">{totalRequests} captured model {totalRequests === 1 ? 'call' : 'calls'}</p>
                 </div>
               </div>
             </div>
@@ -531,12 +531,12 @@ export default function Index() {
               {(isFetching && requestsCurrentPage === 1) || isPending ? (
                 <div className="p-8 text-center">
                   <Loader2 className="w-6 h-6 mx-auto animate-spin text-gray-400" />
-                  <p className="mt-2 text-xs text-gray-500">Loading requests...</p>
+                  <p className="mt-2 text-xs text-gray-500">Loading model calls...</p>
                 </div>
               ) : requests.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
                   <h3 className="text-sm font-medium text-gray-600 mb-1">
-                    {hasActiveFilters ? "No requests match these filters" : "No requests found"}
+                    {hasActiveFilters ? "No model calls match these filters" : "No model calls found"}
                   </h3>
                   {hasActiveFilters ? (
                     <p className="text-xs text-gray-500">Try a wider time range or clear one of the filters.</p>

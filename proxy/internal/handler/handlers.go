@@ -503,6 +503,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 	}
 
 	textBlocks := make(map[int]*strings.Builder)
+	thinkingBlocks := make(map[int]*strings.Builder)
+	thinkingSignatures := make(map[int]*strings.Builder)
+	redactedThinkingBlocks := make(map[int]*model.ContentBlock)
 	toolCalls := make(map[int]*model.ContentBlock)
 	var streamingChunks []string
 	var finalUsage *model.AnthropicUsage
@@ -546,6 +549,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 				if reason, ok := message["stop_reason"].(string); ok {
 					stopReason = reason
 				}
+				if usage, ok := message["usage"].(map[string]interface{}); ok {
+					mergeAnthropicUsage(&finalUsage, usage)
+				}
 			}
 		}
 
@@ -558,25 +564,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 			}
 			// Usage is at top level for message_delta events
 			if usage, ok := genericEvent["usage"].(map[string]interface{}); ok {
-				// Create finalUsage if it doesn't exist yet
-				if finalUsage == nil {
-					finalUsage = &model.AnthropicUsage{}
-				}
-
-				// Capture all usage fields
-				if inputTokens, ok := usage["input_tokens"].(float64); ok {
-					finalUsage.InputTokens = int(inputTokens)
-				}
-				if outputTokens, ok := usage["output_tokens"].(float64); ok {
-					finalUsage.OutputTokens = int(outputTokens)
-				}
-				if cacheCreation, ok := usage["cache_creation_input_tokens"].(float64); ok {
-					finalUsage.CacheCreationInputTokens = int(cacheCreation)
-				}
-				if cacheRead, ok := usage["cache_read_input_tokens"].(float64); ok {
-					finalUsage.CacheReadInputTokens = int(cacheRead)
-				}
-
+				mergeAnthropicUsage(&finalUsage, usage)
 			}
 		}
 
@@ -594,12 +582,23 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 				if event.Index != nil {
 					index = *event.Index
 				}
-				if event.Delta.Type == "text_delta" {
+				switch event.Delta.Type {
+				case "text_delta":
 					if textBlocks[index] == nil {
 						textBlocks[index] = &strings.Builder{}
 					}
 					textBlocks[index].WriteString(event.Delta.Text)
-				} else if event.Delta.Type == "input_json_delta" {
+				case "thinking_delta":
+					if thinkingBlocks[index] == nil {
+						thinkingBlocks[index] = &strings.Builder{}
+					}
+					thinkingBlocks[index].WriteString(event.Delta.Thinking)
+				case "signature_delta":
+					if thinkingSignatures[index] == nil {
+						thinkingSignatures[index] = &strings.Builder{}
+					}
+					thinkingSignatures[index].WriteString(event.Delta.Signature)
+				case "input_json_delta":
 					if toolCalls[index] != nil {
 						toolCalls[index].Input = append(
 							toolCalls[index].Input,
@@ -620,6 +619,18 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 						textBlocks[index] = &strings.Builder{}
 					}
 					textBlocks[index].WriteString(event.ContentBlock.Text)
+				case "thinking":
+					if thinkingBlocks[index] == nil {
+						thinkingBlocks[index] = &strings.Builder{}
+					}
+					thinkingBlocks[index].WriteString(event.ContentBlock.Thinking)
+					if event.ContentBlock.Signature != "" {
+						thinkingSignatures[index] = &strings.Builder{}
+						thinkingSignatures[index].WriteString(event.ContentBlock.Signature)
+					}
+				case "redacted_thinking":
+					block := *event.ContentBlock
+					redactedThinkingBlocks[index] = &block
 				case "tool_use":
 					block := *event.ContentBlock
 					block.Input = nil
@@ -646,14 +657,22 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 	} else if !messageStopped {
 		responseLog.StreamError = "upstream response stream ended before message_stop"
 	} else {
-		blockIndexes := make([]int, 0, len(textBlocks)+len(toolCalls))
+		blockIndexSet := make(map[int]struct{}, len(textBlocks)+len(thinkingBlocks)+len(redactedThinkingBlocks)+len(toolCalls))
 		for index := range textBlocks {
-			blockIndexes = append(blockIndexes, index)
+			blockIndexSet[index] = struct{}{}
+		}
+		for index := range thinkingBlocks {
+			blockIndexSet[index] = struct{}{}
+		}
+		for index := range redactedThinkingBlocks {
+			blockIndexSet[index] = struct{}{}
 		}
 		for index := range toolCalls {
-			if _, exists := textBlocks[index]; !exists {
-				blockIndexes = append(blockIndexes, index)
-			}
+			blockIndexSet[index] = struct{}{}
+		}
+		blockIndexes := make([]int, 0, len(blockIndexSet))
+		for index := range blockIndexSet {
+			blockIndexes = append(blockIndexes, index)
 		}
 		sort.Ints(blockIndexes)
 
@@ -663,6 +682,22 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 				contentBlocks = append(contentBlocks, map[string]interface{}{
 					"type": "text",
 					"text": textBlock.String(),
+				})
+			}
+			if thinkingBlock := thinkingBlocks[index]; thinkingBlock != nil && thinkingBlock.Len() > 0 {
+				thinkingContent := map[string]interface{}{
+					"type":     "thinking",
+					"thinking": thinkingBlock.String(),
+				}
+				if signature := thinkingSignatures[index]; signature != nil && signature.Len() > 0 {
+					thinkingContent["signature"] = signature.String()
+				}
+				contentBlocks = append(contentBlocks, thinkingContent)
+			}
+			if redactedThinking := redactedThinkingBlocks[index]; redactedThinking != nil {
+				contentBlocks = append(contentBlocks, map[string]interface{}{
+					"type": "redacted_thinking",
+					"data": redactedThinking.Data,
 				})
 			}
 			if toolCall := toolCalls[index]; toolCall != nil {
@@ -711,6 +746,24 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		log.Printf("❌ Streaming error: %s", responseLog.StreamError)
 	} else {
 		log.Println("✅ Streaming response completed")
+	}
+}
+
+func mergeAnthropicUsage(target **model.AnthropicUsage, usage map[string]interface{}) {
+	if *target == nil {
+		*target = &model.AnthropicUsage{}
+	}
+	if inputTokens, ok := usage["input_tokens"].(float64); ok {
+		(*target).InputTokens = int(inputTokens)
+	}
+	if outputTokens, ok := usage["output_tokens"].(float64); ok {
+		(*target).OutputTokens = int(outputTokens)
+	}
+	if cacheCreation, ok := usage["cache_creation_input_tokens"].(float64); ok {
+		(*target).CacheCreationInputTokens = int(cacheCreation)
+	}
+	if cacheRead, ok := usage["cache_read_input_tokens"].(float64); ok {
+		(*target).CacheReadInputTokens = int(cacheRead)
 	}
 }
 

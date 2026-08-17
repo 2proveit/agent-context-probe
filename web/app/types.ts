@@ -67,7 +67,7 @@ export interface SessionSummary {
   sessionId: string;
   parentSessionId?: string;
   purpose?: string;
-  kind: 'root' | 'subagent' | 'memory-maintenance' | string;
+  kind: 'root' | 'subagent' | string;
   title: string;
   model?: string;
   agentName?: string;

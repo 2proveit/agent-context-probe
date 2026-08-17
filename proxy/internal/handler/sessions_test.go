@@ -128,8 +128,11 @@ func TestBuildSessionGroupsLinksTaskChildAndResult(t *testing.T) {
 	}
 
 	memory := groups["session-memory"]
-	if memory == nil || memory.summary.Kind != "memory-maintenance" || memory.summary.Title != "Memory maintenance" {
+	if memory == nil || memory.summary.Kind != "root" || memory.summary.Title != "maintain memory" {
 		t.Fatalf("unexpected memory session: %+v", memory)
+	}
+	if memory.summary.Purpose != "memory-maintenance" {
+		t.Fatalf("expected memory purpose metadata to be preserved: %+v", memory.summary)
 	}
 
 	detail := buildSessionDetail(parent, groups)

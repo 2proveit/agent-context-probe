@@ -194,6 +194,69 @@ func TestHandleAnthropicStreamingResponseStoresToolUse(t *testing.T) {
 	}
 }
 
+func TestHandleAnthropicStreamingResponseStoresThinkingAndText(t *testing.T) {
+	storage, err := service.NewSQLiteStorageService(&config.StorageConfig{
+		DBPath: t.TempDir() + "/requests.db",
+	})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	handler := &Handler{
+		storageService: storage,
+		logger:         log.New(io.Discard, "", 0),
+	}
+	requestLog := savedOpenAIRequest(t, storage)
+	raw := strings.Join([]string{
+		`data: {"type":"message_start","message":{"id":"msg_thinking","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":12}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reasoning text"}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed"}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		`data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer text"}}`,
+		`data: {"type":"content_block_stop","index":1}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":10}}`,
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n\n")
+	upstream := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(raw)),
+	}
+
+	handler.handleStreamingResponse(
+		httptest.NewRecorder(),
+		upstream,
+		requestLog,
+		time.Now(),
+	)
+
+	if requestLog.Response.StreamError != "" {
+		t.Fatalf("unexpected stream error: %s", requestLog.Response.StreamError)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(requestLog.Response.Body, &body); err != nil {
+		t.Fatalf("unmarshal stored response: %v", err)
+	}
+	content, ok := body["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("thinking and text content missing: %#v", body["content"])
+	}
+	thinking := content[0].(map[string]interface{})
+	if thinking["type"] != "thinking" || thinking["thinking"] != "reasoning text" || thinking["signature"] != "signed" {
+		t.Fatalf("unexpected thinking block: %#v", thinking)
+	}
+	text := content[1].(map[string]interface{})
+	if text["type"] != "text" || text["text"] != "answer text" {
+		t.Fatalf("unexpected text block: %#v", text)
+	}
+	usage := body["usage"].(map[string]interface{})
+	if usage["input_tokens"] != float64(12) || usage["output_tokens"] != float64(10) {
+		t.Fatalf("unexpected usage: %#v", usage)
+	}
+}
+
 func savedOpenAIRequest(t *testing.T, storage service.StorageService) *model.RequestLog {
 	t.Helper()
 	request := &model.RequestLog{

@@ -149,7 +149,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 				SessionID:       sessionID,
 				ParentSessionID: parentID,
 				Purpose:         purpose,
-				Kind:            sessionKind(parentID, purpose),
+				Kind:            sessionKind(parentID),
 				Status:          "captured",
 				FirstTimestamp:  request.Timestamp,
 				LastTimestamp:   request.Timestamp,
@@ -306,20 +306,14 @@ func firstHeader(headers map[string][]string, names ...string) string {
 	return ""
 }
 
-func sessionKind(parentID, purpose string) string {
+func sessionKind(parentID string) string {
 	if parentID != "" {
 		return "subagent"
-	}
-	if purpose != "" {
-		return purpose
 	}
 	return "root"
 }
 
 func sessionTitle(group *sessionGroup) string {
-	if group.summary.Purpose == "memory-maintenance" {
-		return "Memory maintenance"
-	}
 	title := stripContextBlocks(group.firstUserPrompt)
 	if title == "" {
 		title = group.summary.SessionID
