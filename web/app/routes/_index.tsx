@@ -349,7 +349,7 @@ export default function Index() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between gap-4">
+        <div className="flex w-full items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-4">
             <div className="hidden sm:block">
               <p className="text-sm font-semibold text-gray-900">Agent Context Probe</p>
@@ -404,7 +404,7 @@ export default function Index() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-[1600px] mx-auto px-6 py-8 space-y-8">
+      <main className="w-full space-y-8 px-4 py-6 sm:px-6 lg:py-8">
         {/* Stats Grid */}
         <div className="mb-6">
           <div className="bg-white border border-gray-200 rounded-lg p-4">

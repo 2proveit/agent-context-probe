@@ -607,17 +607,20 @@ export default function SessionView({
   onOpenRequest,
 }: SessionViewProps) {
   return (
-    <div data-testid="session-view" className="min-h-[720px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="grid min-h-[720px] grid-cols-1 lg:grid-cols-[330px_minmax(0,1fr)]">
-        <aside className="border-b border-gray-200 bg-gray-50/70 lg:border-b-0 lg:border-r">
-          <div className="flex h-16 items-center justify-between border-b border-gray-200 px-4">
+    <div
+      data-testid="session-view"
+      className="min-h-[720px] w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm lg:h-[calc(100dvh-22rem)] lg:min-h-[560px]"
+    >
+      <div className="grid min-h-[720px] grid-cols-1 lg:h-full lg:min-h-0 lg:grid-cols-[clamp(330px,20vw,440px)_minmax(0,1fr)]">
+        <aside data-testid="session-sidebar" className="border-b border-gray-200 bg-gray-50/70 lg:flex lg:min-h-0 lg:flex-col lg:border-b-0 lg:border-r">
+          <div className="flex h-16 shrink-0 items-center justify-between border-b border-gray-200 px-4">
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-900">Sessions</h2>
               <p className="mt-0.5 text-xs text-gray-400">{total} captured conversations</p>
             </div>
             {isLoadingList ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : null}
           </div>
-          <div className="max-h-[654px] overflow-y-auto scrollbar-custom">
+          <div className="max-h-[654px] overflow-y-auto scrollbar-custom lg:min-h-0 lg:max-h-none lg:flex-1">
             {sessions.length ? sessions.map(session => (
               <SessionListItem
                 key={session.sessionId}
@@ -631,13 +634,13 @@ export default function SessionView({
           </div>
         </aside>
 
-        <div className="min-w-0 bg-white">
+        <div data-testid="session-detail-pane" className="min-w-0 bg-white lg:min-h-0">
           {isLoadingDetail ? (
-            <div className="flex min-h-[720px] items-center justify-center text-gray-400">
+            <div className="flex min-h-[720px] items-center justify-center text-gray-400 lg:h-full lg:min-h-0">
               <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading session…
             </div>
           ) : detail ? (
-            <div className="max-h-[720px] overflow-y-auto scrollbar-custom">
+            <div className="max-h-[720px] overflow-y-auto scrollbar-custom lg:h-full lg:max-h-none">
               <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-6 py-5 backdrop-blur">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
@@ -657,7 +660,7 @@ export default function SessionView({
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[720px] flex-col items-center justify-center text-gray-400">
+            <div className="flex min-h-[720px] flex-col items-center justify-center text-gray-400 lg:h-full lg:min-h-0">
               <MessageSquareText className="mb-3 h-8 w-8" />
               Select a session to inspect its timeline
             </div>
