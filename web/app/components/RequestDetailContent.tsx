@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { 
   ChevronDown, 
   Info, 
@@ -33,6 +33,33 @@ import type { RequestRecord } from '../types';
 interface RequestDetailContentProps {
   request: RequestRecord;
   onGrade: () => void;
+}
+
+const DETAIL_SECTION_CLASS = 'overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]';
+const DETAIL_SECTION_HEADER_CLASS = 'cursor-pointer border-b border-gray-200 bg-gray-50/70 px-4 py-3 transition-colors hover:bg-gray-100/70';
+const DETAIL_SECTION_TITLE_CLASS = 'flex items-center gap-2 text-sm font-semibold text-gray-900';
+const DETAIL_SECTION_ICON_CLASS = 'h-3.5 w-3.5';
+const DETAIL_SECTION_CHEVRON_CLASS = 'h-4 w-4 text-gray-400 transition-transform';
+const DETAIL_SECTION_BODY_CLASS = 'p-4';
+const DETAIL_COPY_BUTTON_CLASS = 'inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700';
+
+function DetailSectionIcon({
+  name,
+  className,
+  children,
+}: {
+  name: string;
+  className: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      data-section-icon={name}
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${className}`}
+    >
+      {children}
+    </span>
+  );
 }
 
 export default function RequestDetailContent({ request, onGrade }: RequestDetailContentProps) {
@@ -100,12 +127,14 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Request Overview */}
-      <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-            <Info className="w-5 h-5 text-blue-600" />
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center justify-between">
+          <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+            <DetailSectionIcon name="overview" className="border-sky-100 bg-sky-50 text-sky-600">
+              <Info className={DETAIL_SECTION_ICON_CLASS} />
+            </DetailSectionIcon>
             <span>Request Overview</span>
           </h4>
           {/* {!request.promptGrade && canGradeRequest(request) && (
@@ -118,56 +147,58 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
             </button>
           )} */}
         </div>
-        <div className="grid grid-cols-2 gap-6 text-sm">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm lg:grid-cols-2">
           <div className="space-y-3">
-            <div className="flex items-center space-x-3">
-              <span className="text-gray-500 font-medium min-w-[80px]">Method:</span>
-              <span className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wide ${getMethodColor(request.method)}`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="min-w-[72px] text-xs font-medium uppercase tracking-wide text-gray-500">Method</span>
+              <span className={`rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide ${getMethodColor(request.method)}`}>
                 {request.method}
               </span>
             </div>
-            <div className="flex items-center space-x-3">
-              <span className="text-gray-500 font-medium min-w-[80px]">Endpoint:</span>
-              <code className="text-blue-600 bg-blue-50 px-2 py-1 rounded font-mono text-xs border border-blue-200">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <span className="min-w-[72px] text-xs font-medium uppercase tracking-wide text-gray-500">Endpoint</span>
+              <code className="max-w-full break-all rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs text-gray-700">
                 {request.endpoint}
               </code>
-              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getProtocolBadgeClasses(request.endpoint)}`}>
+              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getProtocolBadgeClasses(request.endpoint)}`}>
                 {protocol}
               </span>
             </div>
           </div>
           <div className="space-y-3">
-            <div className="flex items-center space-x-3">
-              <span className="text-gray-500 font-medium min-w-[80px]">Timestamp:</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="min-w-[72px] text-xs font-medium uppercase tracking-wide text-gray-500">Timestamp</span>
               <span className="text-gray-900">{new Date(request.timestamp).toLocaleString()}</span>
             </div>
-            <div className="flex items-center space-x-3">
-              <span className="text-gray-500 font-medium min-w-[80px]">User Agent:</span>
-              <span className="text-gray-600 text-xs">{request.headers['User-Agent']?.[0] || 'N/A'}</span>
+            <div className="flex min-w-0 flex-wrap items-start gap-3">
+              <span className="min-w-[72px] text-xs font-medium uppercase tracking-wide text-gray-500">User Agent</span>
+              <span className="min-w-0 flex-1 break-words text-xs leading-5 text-gray-600">{request.headers['User-Agent']?.[0] || 'N/A'}</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Headers */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+      <div className={DETAIL_SECTION_CLASS}>
         <div 
-          className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+          className={DETAIL_SECTION_HEADER_CLASS}
           onClick={() => toggleSection('headers')}
         >
           <div className="flex items-center justify-between">
-            <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-              <Settings className="w-5 h-5 text-blue-600" />
+            <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+              <DetailSectionIcon name="headers" className="border-blue-100 bg-blue-50 text-blue-600">
+                <Settings className={DETAIL_SECTION_ICON_CLASS} />
+              </DetailSectionIcon>
               <span>Request Headers</span>
             </h4>
-            <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+            <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
               expandedSections.headers ? 'rotate-180' : ''
             }`} />
           </div>
         </div>
         {expandedSections.headers && (
-          <div className="p-6">
-            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <div className={DETAIL_SECTION_BODY_CLASS}>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-700">Headers</span>
                 <button
@@ -194,30 +225,32 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
         <>
           {/* System Messages */}
           {(request.body.system || request.body.instructions) && (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            <div className={DETAIL_SECTION_CLASS}>
               <div 
-                className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+                className={DETAIL_SECTION_HEADER_CLASS}
                 onClick={() => toggleSection('system')}
               >
                 <div className="flex items-center justify-between">
-                  <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-                    <Cpu className="w-5 h-5 text-yellow-600" />
+                  <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+                    <DetailSectionIcon name="system" className="border-amber-100 bg-amber-50 text-amber-600">
+                      <Cpu className={DETAIL_SECTION_ICON_CLASS} />
+                    </DetailSectionIcon>
                     <span>System Instructions</span>
-                    <span className="text-xs bg-yellow-50 text-yellow-700 px-2 py-1 rounded-full border border-yellow-200">
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                       {request.body.system?.length || 1} items
                     </span>
                   </h4>
-                  <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                  <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
                     expandedSections.system ? 'rotate-180' : ''
                   }`} />
                 </div>
               </div>
               {expandedSections.system && (
-                <div className="p-6 space-y-4">
+                <div className="space-y-3 p-4">
                   {(request.body.system || [{ text: request.body.instructions, type: 'instructions' }]).map((sys: any, index: number) => (
-                    <div key={index} className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-yellow-700 font-medium text-sm">System Message #{index + 1}</span>
+                    <div key={index} className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
+                      <div className="mb-3 flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-800">System Message #{index + 1}</span>
                         {sys.cache_control && (
                           <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full border border-orange-200">
                             Cache: {sys.cache_control.type}
@@ -236,26 +269,28 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
 
           {/* Tools */}
           {request.body.tools && request.body.tools.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            <div className={DETAIL_SECTION_CLASS}>
               <div 
-                className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+                className={DETAIL_SECTION_HEADER_CLASS}
                 onClick={() => toggleSection('tools')}
               >
                 <div className="flex items-center justify-between">
-                  <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-                    <Wrench className="w-5 h-5 text-indigo-600" />
+                  <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+                    <DetailSectionIcon name="tools" className="border-orange-100 bg-orange-50 text-orange-600">
+                      <Wrench className={DETAIL_SECTION_ICON_CLASS} />
+                    </DetailSectionIcon>
                     <span>Available Tools</span>
-                    <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full border border-indigo-200">
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600">
                       {request.body.tools.length} tools
                     </span>
                   </h4>
-                  <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                  <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
                     expandedSections.tools ? 'rotate-180' : ''
                   }`} />
                 </div>
               </div>
               {expandedSections.tools && (
-                <div className="p-6 space-y-4">
+                <div className="space-y-3 p-4">
                   {request.body.tools.map((tool, index) => (
                     <ToolCard key={index} tool={tool} index={index} />
                   ))}
@@ -266,55 +301,73 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
 
           {/* Conversation */}
           {conversationItems.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+            <div className={DETAIL_SECTION_CLASS} data-testid="conversation-section">
               <div 
-                className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+                className={DETAIL_SECTION_HEADER_CLASS}
                 onClick={() => toggleSection('conversation')}
+                role="button"
+                tabIndex={0}
+                aria-expanded={Boolean(expandedSections.conversation)}
+                data-testid="conversation-toggle"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    toggleSection('conversation');
+                  }
+                }}
               >
                 <div className="flex items-center justify-between">
-                  <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-                    <MessageCircle className="w-5 h-5 text-blue-600" />
+                  <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+                    <DetailSectionIcon name="conversation" className="border-emerald-100 bg-emerald-50 text-emerald-600">
+                      <MessageCircle className={DETAIL_SECTION_ICON_CLASS} />
+                    </DetailSectionIcon>
                     <span>Conversation</span>
-                    <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-200">
+                    <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600">
                       {conversationItems.length} items
                     </span>
                   </h4>
-                  <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                  <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
                     expandedSections.conversation ? 'rotate-180' : ''
                   }`} />
                 </div>
               </div>
-              {expandedSections.conversation && (
-                <div className="p-6 space-y-4 max-h-[600px] overflow-y-auto">
-                  {conversationItems.map((message, index) => (
-                    <MessageBubble key={index} message={message} index={index} />
-                  ))}
+              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                expandedSections.conversation ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+              }`}>
+                <div className="min-h-0 overflow-hidden">
+                  <div className="max-h-[min(52dvh,560px)] space-y-3 overflow-y-auto p-4 scrollbar-custom">
+                    {conversationItems.map((message, index) => (
+                      <MessageBubble key={index} message={message} index={index} />
+                    ))}
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* Model Configuration */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <div className={DETAIL_SECTION_CLASS}>
             <div 
-              className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+              className={DETAIL_SECTION_HEADER_CLASS}
               onClick={() => toggleSection('model')}
             >
               <div className="flex items-center justify-between">
-                <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-                  <Brain className="w-5 h-5 text-purple-600" />
+                <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+                  <DetailSectionIcon name="model" className="border-violet-100 bg-violet-50 text-violet-600">
+                    <Brain className={DETAIL_SECTION_ICON_CLASS} />
+                  </DetailSectionIcon>
                   <span>Model Configuration</span>
                 </h4>
-                <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
                   expandedSections.model ? 'rotate-180' : ''
                 }`} />
               </div>
             </div>
             {expandedSections.model && (
-              <div className="p-6 space-y-4">
+              <div className="space-y-4 p-4">
                 {/* Model Routing Information */}
                 {request.routedModel && request.routedModel !== request.originalModel && (
-                  <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl p-4">
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-4">
                     <div className="flex items-center space-x-4">
                       <div className="flex-1">
                         <div className="flex items-center space-x-2 mb-2">
@@ -347,7 +400,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                 )}
 
                 {/* Model Parameters */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {!request.routedModel || request.routedModel === request.originalModel ? (
                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                       <div className="text-xs text-gray-500 mb-1">Model</div>
@@ -375,14 +428,16 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
             )}
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <div className={DETAIL_SECTION_CLASS}>
             <div
-              className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+              className={DETAIL_SECTION_HEADER_CLASS}
               onClick={() => toggleSection('rawRequest')}
             >
               <div className="flex items-center justify-between">
-                <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-                  <FileText className="w-5 h-5 text-gray-600" />
+                <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+                  <DetailSectionIcon name="raw-request" className="border-slate-200 bg-slate-50 text-slate-600">
+                    <FileText className={DETAIL_SECTION_ICON_CLASS} />
+                  </DetailSectionIcon>
                   <span>Raw Request JSON</span>
                 </h4>
                 <div className="flex items-center space-x-2">
@@ -392,7 +447,7 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                       event.stopPropagation();
                       handleCopy(formatJSONForCopy(request.body), 'rawRequest');
                     }}
-                    className="inline-flex items-center space-x-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    className={DETAIL_COPY_BUTTON_CLASS}
                     title="Copy raw request JSON"
                     aria-label="Copy raw request JSON"
                   >
@@ -403,15 +458,15 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
                     )}
                     <span>{copied.rawRequest ? 'Copied' : 'Copy'}</span>
                   </button>
-                  <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+                  <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
                     expandedSections.rawRequest ? 'rotate-180' : ''
                   }`} />
                 </div>
               </div>
             </div>
             {expandedSections.rawRequest && (
-              <div className="p-6">
-                <pre className="text-xs text-gray-700 overflow-auto max-h-96 bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <div className={DETAIL_SECTION_BODY_CLASS}>
+                <pre className="max-h-96 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-700 scrollbar-custom">
                   {formatJSON(request.body, rawRequestMaxDisplayChars)}
                 </pre>
               </div>
@@ -514,9 +569,9 @@ function normalizeRequestMessages(body?: RequestRecord['body']): Array<{ role: s
 // Message bubble component
 function MessageBubble({ message, index }: { message: any; index: number }) {
   const roleColors = {
-    'user': 'bg-blue-50 border border-blue-200',
-    'assistant': 'bg-gray-50 border border-gray-200',
-    'system': 'bg-yellow-50 border border-yellow-200'
+    'user': 'border-gray-200 border-l-blue-500 bg-white',
+    'assistant': 'border-gray-200 border-l-gray-400 bg-gray-50/60',
+    'system': 'border-amber-200 border-l-amber-400 bg-amber-50/40'
   };
 
   const roleIcons = {
@@ -534,14 +589,14 @@ function MessageBubble({ message, index }: { message: any; index: number }) {
   const Icon = roleIcons[message.role as keyof typeof roleIcons] || User;
 
   return (
-    <div className={`rounded-lg p-4 ${roleColors[message.role as keyof typeof roleColors] || 'bg-gray-50 border border-gray-200'}`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center border border-gray-200">
-            <Icon className={`w-4 h-4 ${roleIconColors[message.role as keyof typeof roleIconColors] || 'text-gray-600'}`} />
+    <div className={`rounded-lg border border-l-2 p-4 ${roleColors[message.role as keyof typeof roleColors] || 'border-gray-200 border-l-gray-400 bg-gray-50/60'}`}>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white">
+            <Icon className={`h-3.5 w-3.5 ${roleIconColors[message.role as keyof typeof roleIconColors] || 'text-gray-600'}`} />
           </div>
-          <span className="font-medium capitalize text-gray-900">{message.role}</span>
-          <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded-full border border-gray-200">
+          <span className="text-sm font-medium capitalize text-gray-900">{message.role}</span>
+          <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-500">
             #{index + 1}
           </span>
         </div>
@@ -556,8 +611,8 @@ function MessageBubble({ message, index }: { message: any; index: number }) {
 // Placeholder for prompt grading results - you can expand this
 function PromptGradingResults({ promptGrade }: { promptGrade: any }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-      <h4 className="text-lg font-semibold text-gray-900 mb-4">Prompt Quality Analysis</h4>
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <h4 className="mb-4 text-sm font-semibold text-gray-900">Prompt Quality Analysis</h4>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <span className="text-gray-700">Overall Score:</span>
@@ -705,16 +760,18 @@ function ResponseDetails({
   );
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm border-l-4 border-l-blue-500">
+    <div className={DETAIL_SECTION_CLASS} data-testid="api-response-section">
       <div 
-        className="bg-gray-50 px-6 py-4 border-b border-gray-200 cursor-pointer"
+        className={DETAIL_SECTION_HEADER_CLASS}
         onClick={() => toggleSection('overview')}
       >
         <div className="flex items-center justify-between">
-          <h4 className="text-lg font-semibold text-gray-900 flex items-center space-x-3">
-            <ArrowLeftRight className="w-5 h-5 text-blue-600" />
+          <h4 className={DETAIL_SECTION_TITLE_CLASS}>
+            <DetailSectionIcon name="api-response" className="border-cyan-100 bg-cyan-50 text-cyan-600">
+              <ArrowLeftRight className={DETAIL_SECTION_ICON_CLASS} />
+            </DetailSectionIcon>
             <span>API Response</span>
-            <span className={`text-xs px-2 py-1 rounded-full border ${statusColors.bg} ${statusColors.text} ${statusColors.border}`}>
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusColors.bg} ${statusColors.text} ${statusColors.border}`}>
               {response.statusCode}
             </span>
             {response.streamError && (
@@ -728,22 +785,22 @@ function ResponseDetails({
               </span>
             )}
           </h4>
-          <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${
+          <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
             expandedSections.overview ? 'rotate-180' : ''
           }`} />
         </div>
       </div>
       
       {expandedSections.overview && (
-        <div className="p-6 space-y-6">
+        <div className="space-y-4 p-4">
           {/* Response Overview */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className={`${statusColors.bg} border ${statusColors.border} rounded-lg p-4`}>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className={`${statusColors.bg} rounded-lg border ${statusColors.border} p-3`}>
               <div className="flex items-center space-x-2 mb-2">
                 <Activity className={`w-4 h-4 ${statusColors.icon}`} />
                 <span className={`text-xs font-medium ${statusColors.text}`}>Status</span>
               </div>
-              <div className={`text-lg font-bold ${statusColors.text}`}>{response.statusCode}</div>
+              <div className={`text-base font-semibold ${statusColors.text}`}>{response.statusCode}</div>
               <div className={`text-xs ${statusColors.text} opacity-75`}>
                 {response.statusCode >= 200 && response.statusCode < 300 ? 'Success' :
                  response.statusCode >= 400 && response.statusCode < 500 ? 'Client Error' :
@@ -751,86 +808,86 @@ function ResponseDetails({
               </div>
             </div>
             
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="flex items-center space-x-2 mb-2">
-                <Clock className="w-4 h-4 text-blue-600" />
-                <span className="text-xs font-medium text-blue-700">Response Time</span>
+                <Clock className="h-4 w-4 text-gray-500" />
+                <span className="text-xs font-medium text-gray-600">Response Time</span>
               </div>
-              <div className="text-lg font-bold text-blue-700">{response.responseTime}ms</div>
-              <div className="text-xs text-blue-700 opacity-75">
+              <div className="text-base font-semibold text-gray-900">{response.responseTime}ms</div>
+              <div className="text-xs text-gray-500">
                 {response.responseTime < 1000 ? 'Fast' : response.responseTime < 3000 ? 'Normal' : 'Slow'}
               </div>
             </div>
             
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="flex items-center space-x-2 mb-2">
-                <Wifi className="w-4 h-4 text-purple-600" />
-                <span className="text-xs font-medium text-purple-700">Type</span>
+                <Wifi className="h-4 w-4 text-gray-500" />
+                <span className="text-xs font-medium text-gray-600">Type</span>
               </div>
-              <div className="text-lg font-bold text-purple-700">
+              <div className="text-base font-semibold text-gray-900">
                 {response.isStreaming ? 'Stream' : 'Single'}
               </div>
-              <div className="text-xs text-purple-700 opacity-75">
+              <div className="text-xs text-gray-500">
                 {response.isStreaming ? 'Streaming' : 'Complete'}
               </div>
             </div>
             
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="flex items-center space-x-2 mb-2">
                 <Calendar className="w-4 h-4 text-gray-600" />
                 <span className="text-xs font-medium text-gray-700">Completed</span>
               </div>
-              <div className="text-sm font-bold text-gray-700">{completedAt.split(' ')[1] || 'N/A'}</div>
+              <div className="text-sm font-semibold text-gray-900">{completedAt.split(' ')[1] || 'N/A'}</div>
               <div className="text-xs text-gray-700 opacity-75">{completedAt.split(' ')[0] || ''}</div>
             </div>
           </div>
 
           {/* Token Usage */}
           {usage && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center space-x-2 mb-2">
-                  <Brain className="w-4 h-4 text-indigo-600" />
-                  <span className="text-xs font-medium text-indigo-700">Input Tokens</span>
+                  <Brain className="h-4 w-4 text-gray-500" />
+                  <span className="text-xs font-medium text-gray-600">Input Tokens</span>
                 </div>
-                <div className="text-lg font-bold text-indigo-700">
+                <div className="text-base font-semibold text-gray-900">
                   {usage.input.toLocaleString()}
                 </div>
-                <div className="text-xs text-indigo-700 opacity-75">Prompt</div>
+                <div className="text-xs text-gray-500">Prompt</div>
               </div>
               
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center space-x-2 mb-2">
-                  <MessageCircle className="w-4 h-4 text-emerald-600" />
-                  <span className="text-xs font-medium text-emerald-700">Output Tokens</span>
+                  <MessageCircle className="h-4 w-4 text-gray-500" />
+                  <span className="text-xs font-medium text-gray-600">Output Tokens</span>
                 </div>
-                <div className="text-lg font-bold text-emerald-700">
+                <div className="text-base font-semibold text-gray-900">
                   {usage.output.toLocaleString()}
                 </div>
-                <div className="text-xs text-emerald-700 opacity-75">Response</div>
+                <div className="text-xs text-gray-500">Response</div>
               </div>
               
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center space-x-2 mb-2">
-                  <Cpu className="w-4 h-4 text-amber-600" />
-                  <span className="text-xs font-medium text-amber-700">Total Tokens</span>
+                  <Cpu className="h-4 w-4 text-gray-500" />
+                  <span className="text-xs font-medium text-gray-600">Total Tokens</span>
                 </div>
-                <div className="text-lg font-bold text-amber-700">
+                <div className="text-base font-semibold text-gray-900">
                   {usage.total.toLocaleString()}
                 </div>
-                <div className="text-xs text-amber-700 opacity-75">Combined</div>
+                <div className="text-xs text-gray-500">Combined</div>
               </div>
               
               {usage.cached > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                   <div className="flex items-center space-x-2 mb-2">
-                    <Bot className="w-4 h-4 text-green-600" />
-                    <span className="text-xs font-medium text-green-700">Cached Tokens</span>
+                    <Bot className="h-4 w-4 text-gray-500" />
+                    <span className="text-xs font-medium text-gray-600">Cached Tokens</span>
                   </div>
-                  <div className="text-lg font-bold text-green-700">
+                  <div className="text-base font-semibold text-gray-900">
                     {usage.cached.toLocaleString()}
                   </div>
-                  <div className="text-xs text-green-700 opacity-75">From Cache</div>
+                  <div className="text-xs text-gray-500">From Cache</div>
                 </div>
               )}
             </div>
@@ -842,7 +899,7 @@ function ResponseDetails({
 
           {/* Response Headers */}
           {response.headers && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div 
                 className="px-4 py-3 border-b border-gray-200 cursor-pointer"
                 onClick={() => toggleSection('responseHeaders')}
@@ -861,7 +918,7 @@ function ResponseDetails({
                 </div>
               </div>
               {expandedSections.responseHeaders && (
-                <div className="px-4 pb-4">
+                <div className="p-4">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-700">Headers</span>
@@ -888,7 +945,7 @@ function ResponseDetails({
 
           {/* Response Body */}
           {(response.body || (!response.isStreaming && response.bodyText)) && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div 
                 className="px-4 py-3 border-b border-gray-200 cursor-pointer"
                 onClick={() => toggleSection('responseBody')}
@@ -907,7 +964,7 @@ function ResponseDetails({
                 </div>
               </div>
               {expandedSections.responseBody && (
-                <div className="px-4 pb-4">
+                <div className="p-4">
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-700">Response</span>
@@ -937,7 +994,7 @@ function ResponseDetails({
 
           {/* Streaming Response */}
           {showRawStreamEvents && response.isStreaming && response.bodyText && (
-            <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div
                 className="px-4 py-3 border-b border-gray-200 cursor-pointer"
                 onClick={() => toggleSection('rawSSE')}
@@ -963,7 +1020,7 @@ function ResponseDetails({
           {showRawStreamEvents && response.isStreaming && response.streamingChunks && response.streamingChunks.length > 0 && (() => {
             const parsed = parseStreamingResponse(response.streamingChunks);
             return (
-              <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+              <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                 <div 
                   className="px-4 py-3 border-b border-gray-200 cursor-pointer"
                   onClick={() => toggleSection('streamingResponse')}
@@ -987,7 +1044,7 @@ function ResponseDetails({
                   </div>
                 </div>
                 {expandedSections.streamingResponse && (
-                  <div className="px-4 pb-4 space-y-3">
+                  <div className="space-y-3 p-4">
                     {/* Clean Parsed Response */}
                     {parsed.isFormatted && (
                       <div className="bg-white rounded-lg p-4 border border-green-200">
@@ -1128,16 +1185,16 @@ function SemanticResponse({ body, endpoint }: { body: any; endpoint: string }) {
   if (items.length === 0) return null;
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-      <h5 className="text-sm font-semibold text-blue-900">Structured Output</h5>
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <h5 className="text-sm font-semibold text-gray-900">Structured Output</h5>
       {items.map((item, index) => item.reasoning ? (
-        <details key={index} className="bg-white border border-purple-200 rounded-lg p-3">
-          <summary className="cursor-pointer text-sm font-medium text-purple-700">{item.title}</summary>
+        <details key={index} className="rounded-lg border border-gray-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-medium text-gray-700">{item.title}</summary>
           <div className="mt-3"><MessageContent content={item.content} /></div>
         </details>
       ) : (
-        <div key={index} className="bg-white border border-blue-200 rounded-lg p-3">
-          <div className="text-xs font-semibold text-blue-700 mb-2">{item.title}</div>
+        <div key={index} className="rounded-lg border border-gray-200 bg-white p-3">
+          <div className="mb-2 text-xs font-semibold text-gray-600">{item.title}</div>
           <MessageContent content={item.content} />
         </div>
       ))}
@@ -1188,15 +1245,15 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
   const displayDescription = expanded ? description : description.slice(0, 300);
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
-      <div className="p-5">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-gray-200 shadow-sm">
-              <Wrench className="w-5 h-5 text-gray-600" />
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/60">
+      <div className="p-4">
+        <div className="mb-3 flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white">
+              <Wrench className="h-4 w-4 text-gray-500" />
             </div>
             <div>
-              <h5 className="text-lg font-bold text-gray-900">{toolName}</h5>
+              <h5 className="text-sm font-semibold text-gray-900">{toolName}</h5>
               <span className="text-xs text-gray-500">Tool #{index + 1}</span>
             </div>
           </div>
@@ -1221,8 +1278,8 @@ function ToolCard({ tool, index }: { tool: any; index: number }) {
         
         {schema && (
           <div className="mt-4">
-            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+              <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2">
                 <span className="text-xs font-semibold text-gray-700 flex items-center space-x-2">
                   <Settings className="w-3.5 h-3.5" />
                   <span>Input Schema</span>

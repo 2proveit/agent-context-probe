@@ -518,13 +518,16 @@ export default function Index() {
           />
         ) : (
           /* Request History */
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Request History</h2>
+          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="bg-gray-50/70">
+              <div className="mx-auto flex h-16 w-full max-w-4xl items-center px-4">
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-900">Requests</h2>
+                  <p className="mt-0.5 text-xs text-gray-400">{totalRequests} captured requests</p>
+                </div>
               </div>
             </div>
-            <div className="divide-y divide-gray-200">
+            <div className="py-2">
               {(isFetching && requestsCurrentPage === 1) || isPending ? (
                 <div className="p-8 text-center">
                   <Loader2 className="w-6 h-6 mx-auto animate-spin text-gray-400" />
@@ -544,11 +547,19 @@ export default function Index() {
               ) : (
                 <>
                   {requests.map(request => (
-                    <div key={request.id} className="px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer border-b border-gray-100 last:border-b-0" onClick={() => showRequestDetails(request.id)}>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0 mr-4">
+                    <div
+                      key={request.id}
+                      data-testid="request-row"
+                      className="cursor-pointer py-1"
+                      onClick={() => showRequestDetails(request.id)}
+                    >
+                      <div
+                        data-testid="request-row-content"
+                        className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-gray-50/80 sm:grid-cols-[minmax(0,36rem)_auto] sm:items-start sm:gap-6"
+                      >
+                        <div data-testid="request-summary" className="min-w-0">
                           {/* Model and Status */}
-                          <div className="flex items-center space-x-3 mb-1">
+                          <div className="mb-1.5 flex flex-wrap items-center gap-2">
                             <h3 className="text-sm font-medium">
                               {request.routedModel || request.body?.model ? (
                                 // Use routedModel if available, otherwise fall back to body.model
@@ -586,12 +597,12 @@ export default function Index() {
                           </div>
                           
                           {/* Endpoint */}
-                          <div className="text-xs text-gray-600 font-mono mb-1">
+                          <div className="mb-1.5 truncate font-mono text-xs text-gray-500">
                             {request.endpoint}
                           </div>
                           
                           {/* Metrics Row */}
-                          <div className="flex items-center space-x-3 text-xs">
+                          <div className="flex flex-wrap items-center gap-3 text-xs">
                             {getUsage(request.response?.body) && (
                               <>
                                 <span className="font-mono text-gray-600">
@@ -615,7 +626,7 @@ export default function Index() {
                             )}
                           </div>
                         </div>
-                        <div className="flex flex-shrink-0 items-start space-x-3">
+                        <div data-testid="request-actions" className="flex flex-shrink-0 items-start space-x-3 sm:justify-self-start">
                           <button
                             type="button"
                             onClick={(event) => {
@@ -646,7 +657,7 @@ export default function Index() {
                     </div>
                   ))}
                   {hasMoreRequests && (
-                    <div className="p-3 text-center border-t border-gray-100">
+                    <div className="p-3 text-center">
                       <button
                         onClick={() => loadRequests(true)}
                         disabled={isFetching}
@@ -665,19 +676,27 @@ export default function Index() {
 
       {/* Request Detail Modal */}
       {isModalOpen && selectedRequest && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="bg-white rounded-xl max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
-            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/55 p-3 backdrop-blur-[2px] sm:p-6">
+          <div
+            data-testid="request-detail-modal"
+            className="flex h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl sm:h-[min(88dvh,960px)] sm:w-[min(92vw,1600px)]"
+          >
+            <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 sm:px-5 sm:py-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <FileText className="w-5 h-5 text-blue-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">Request Details</h3>
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-900 text-white">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-gray-900">Request Details</h3>
+                    <p className="truncate font-mono text-[11px] text-gray-400">{selectedRequest.requestId}</p>
+                  </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"
                     onClick={() => copyRequestId(selectedRequest.requestId)}
-                    className="inline-flex items-center space-x-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                     title={`Copy request ID: ${selectedRequest.requestId}`}
                     aria-label={`Copy request ID ${selectedRequest.requestId}`}
                   >
@@ -690,7 +709,7 @@ export default function Index() {
                   </button>
                   <button
                     onClick={closeModal}
-                    className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-lg"
+                    className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
                     aria-label="Close request details"
                   >
                     <X className="w-5 h-5" />
@@ -698,7 +717,10 @@ export default function Index() {
                 </div>
               </div>
             </div>
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-100px)]">
+            <div
+              data-testid="request-detail-scroll"
+              className="min-h-0 flex-1 overflow-y-auto bg-gray-50/70 p-3 scrollbar-custom sm:p-5"
+            >
               <RequestDetailContent request={selectedRequest} onGrade={() => gradeRequest(selectedRequest.id)} />
             </div>
           </div>
