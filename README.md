@@ -40,42 +40,68 @@ Agent Context Probe serves three main purposes:
 
 ### Prerequisites
 
-- **Option 1**: Go 1.20+ and Node.js 18+ (for local development)
-- **Option 2**: Docker (for containerized deployment)
+- Go 1.20 or later
+- Node.js 20 or later, including npm
 - Claude Code
+- Windows 10/11 with Windows PowerShell 5.1 or later, or macOS with Bash
+- Docker Desktop only if using the containerized deployment
 
-### Installation
+The proxy uses a pure-Go SQLite driver. Native Windows builds do not require
+GCC, MinGW, or a separate SQLite installation.
 
-#### Option 1: Local Development
+### Windows startup
 
-1. **Clone the repository**
+Run the following commands in PowerShell:
 
-   ```bash
-   git clone https://github.com/2proveit/agent-context-probe.git
-   cd agent-context-probe
-   ```
+```powershell
+git clone https://github.com/2proveit/agent-context-probe.git
+Set-Location agent-context-probe
+Copy-Item config.yaml.example config.yaml
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
+```
 
-2. **Configure the proxy**
+`run.ps1` downloads the Go modules, installs the web dependencies when needed,
+builds `bin\proxy.exe`, and starts both services. Keep that PowerShell window
+open. In a second PowerShell window, route Claude Code through the proxy:
 
-   ```bash
-   cp config.yaml.example config.yaml
-   ```
+```powershell
+$env:ANTHROPIC_BASE_URL = "http://localhost:3001"
+claude
+```
 
-3. **Install and run** (first time)
+Subsequent starts use the same command:
 
-   ```bash
-   make install  # Install all dependencies
-   make dev      # Start both services
-   ```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
+```
 
-4. **Subsequent runs** (after initial setup)
-   ```bash
-   make dev
-   # or
-   ./run.sh
-   ```
+### macOS startup
 
-#### Option 2: Docker
+Run the following commands in Terminal:
+
+```bash
+git clone https://github.com/2proveit/agent-context-probe.git
+cd agent-context-probe
+cp config.yaml.example config.yaml
+./run.sh
+```
+
+`run.sh` downloads the Go modules, installs the web dependencies when needed,
+builds `bin/proxy`, and starts both services. Keep that terminal open. In a
+second terminal, route Claude Code through the proxy:
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:3001
+claude
+```
+
+Subsequent starts can use either `./run.sh` or `make dev`.
+
+### Docker startup
+
+On Windows, configure Docker Desktop to use Linux containers. The default
+single-line `docker build` and `docker run` commands below work in PowerShell;
+the multi-line persistent-volume examples use Bash syntax.
 
 1. **Clone the repository**
 
@@ -147,7 +173,16 @@ Agent Context Probe serves three main purposes:
 
 ### Using the Proxy
 
-For Claude Code or another Anthropic-compatible client, set:
+For Claude Code or another Anthropic-compatible client, set the base URL in the
+shell that will launch the client.
+
+Windows PowerShell:
+
+```powershell
+$env:ANTHROPIC_BASE_URL = "http://localhost:3001"
+```
+
+macOS:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:3001
@@ -188,7 +223,7 @@ provider.
 
 ### Running Services Separately
 
-If you need to run services independently:
+On macOS, the services can be run independently in separate terminals:
 
 ```bash
 # Run proxy only
@@ -198,7 +233,19 @@ make run-proxy
 make run-web
 ```
 
-### Available Make Commands
+On Windows, run the services in two PowerShell windows:
+
+```powershell
+# PowerShell window 1
+Set-Location proxy
+go run .\cmd\proxy
+
+# PowerShell window 2, from the repository root
+Set-Location web
+npm.cmd run dev
+```
+
+### Available Make Commands (macOS)
 
 ```bash
 make install    # Install all dependencies
@@ -375,7 +422,8 @@ agent-context-probe/
 ├── web/                   # React Remix frontend
 │   ├── app/              # Remix application
 │   └── package.json      # Node dependencies
-├── run.sh                # Start script
+├── run.ps1               # Windows PowerShell start script
+├── run.sh                # macOS Bash start script
 ├── .env.example          # Environment template
 └── README.md            # This file
 ```

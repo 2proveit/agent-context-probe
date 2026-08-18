@@ -21,7 +21,18 @@ fi
 
 # Check if Node.js is installed
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js is not installed. Please install Node.js 18 or higher."
+    echo "❌ Node.js is not installed. Please install Node.js 20 or higher."
+    exit 1
+fi
+
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+if [ "$NODE_MAJOR" -lt 20 ]; then
+    echo "❌ Node.js 20 or higher is required. Found: $(node --version)"
+    exit 1
+fi
+
+if ! command -v npm &> /dev/null; then
+    echo "❌ npm is not installed. Install it with Node.js 20 or higher."
     exit 1
 fi
 
@@ -48,6 +59,7 @@ trap cleanup EXIT INT TERM
 
 # Build and start proxy server
 echo -e "\n${BLUE}📦 Building proxy server...${NC}"
+mkdir -p bin
 cd proxy
 go mod download
 go build -o ../bin/proxy cmd/proxy/main.go
@@ -59,7 +71,7 @@ echo -e "${GREEN}✅ Proxy server built${NC}"
 if [ ! -d "web/node_modules" ]; then
     echo -e "\n${BLUE}📦 Installing web dependencies...${NC}"
     cd web
-    npm install
+    npm ci
     cd ..
     echo -e "${GREEN}✅ Web dependencies installed${NC}"
 fi
