@@ -185,6 +185,147 @@ func TestBuildSessionGroupsCalculatesTreeElapsedTime(t *testing.T) {
 	}
 }
 
+func TestBuildToolExecutionWindowsAcrossProtocols(t *testing.T) {
+	requests := []model.RequestLog{
+		{
+			RequestID: "chat-source",
+			Timestamp: "2026-08-13T10:00:00.100Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"chat-session"}},
+			Body:      map[string]interface{}{"model": "chat-model"},
+			Response: responseLogAt(t, map[string]interface{}{
+				"choices": []interface{}{map[string]interface{}{
+					"message": map[string]interface{}{"tool_calls": []interface{}{
+						map[string]interface{}{"id": "call-read", "function": map[string]interface{}{"name": "read", "arguments": `{}`}},
+						map[string]interface{}{"id": "call-glob", "function": map[string]interface{}{"name": "glob", "arguments": `{}`}},
+					}},
+				}},
+			}, 1400, "2026-08-13T10:00:01.500Z"),
+		},
+		{
+			RequestID: "chat-result",
+			Timestamp: "2026-08-13T10:00:04.900Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"chat-session"}},
+			Body: map[string]interface{}{"messages": []interface{}{
+				map[string]interface{}{"role": "tool", "tool_call_id": "call-read", "content": "read result"},
+				map[string]interface{}{"role": "tool", "tool_call_id": "call-glob", "content": "glob result"},
+			}},
+			Response: responseLogAt(t, map[string]interface{}{}, 100, "2026-08-13T10:00:05.000Z"),
+		},
+		{
+			RequestID: "anthropic-source",
+			Timestamp: "2026-08-13T10:01:10.050Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"anthropic-session"}},
+			Body:      map[string]interface{}{"model": "anthropic-model"},
+			Response: responseLogAt(t, map[string]interface{}{
+				"content": []interface{}{map[string]interface{}{
+					"type": "tool_use", "id": "toolu-edit", "name": "edit", "input": map[string]interface{}{},
+				}},
+			}, 2200, "2026-08-13T10:01:12.250Z"),
+		},
+		{
+			RequestID: "anthropic-result",
+			Timestamp: "2026-08-13T10:01:15.750Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"anthropic-session"}},
+			Body: map[string]interface{}{"messages": []interface{}{map[string]interface{}{
+				"role": "user", "content": []interface{}{map[string]interface{}{
+					"type": "tool_result", "tool_use_id": "toolu-edit", "content": "edited",
+				}},
+			}}},
+			Response: responseLogAt(t, map[string]interface{}{}, 100, "2026-08-13T10:01:15.850Z"),
+		},
+		{
+			RequestID: "responses-source",
+			Timestamp: "2026-08-13T10:02:20.000Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"responses-session"}},
+			Body:      map[string]interface{}{"model": "responses-model"},
+			Response: responseLogAt(t, map[string]interface{}{
+				"output": []interface{}{map[string]interface{}{
+					"type": "function_call", "call_id": "call-shell", "name": "shell", "arguments": `{}`,
+				}},
+			}, 1125, "2026-08-13T10:02:21.125Z"),
+		},
+		{
+			RequestID: "responses-result",
+			Timestamp: "2026-08-13T10:02:22.625Z",
+			Headers:   map[string][]string{"X-Session-Affinity": {"responses-session"}},
+			Body: map[string]interface{}{"input": []interface{}{map[string]interface{}{
+				"type": "function_call_output", "call_id": "call-shell", "output": "done",
+			}}},
+			Response: responseLogAt(t, map[string]interface{}{}, 100, "2026-08-13T10:02:22.725Z"),
+		},
+	}
+
+	_, groups := buildSessionGroups(requests)
+	tests := []struct {
+		sessionID string
+		requestID string
+		duration  int64
+		tools     int
+	}{
+		{sessionID: "chat-session", requestID: "chat-source", duration: 3400, tools: 2},
+		{sessionID: "anthropic-session", requestID: "anthropic-source", duration: 3500, tools: 1},
+		{sessionID: "responses-session", requestID: "responses-source", duration: 1500, tools: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.sessionID, func(t *testing.T) {
+			detail := buildSessionDetail(groups[test.sessionID], groups)
+			if len(detail.ToolWindows) != 1 {
+				t.Fatalf("expected one tool window, got %+v", detail.ToolWindows)
+			}
+			window := detail.ToolWindows[0]
+			if window.RequestID != test.requestID || !window.Complete || window.Approximate {
+				t.Fatalf("unexpected window metadata: %+v", window)
+			}
+			if window.DurationMs != test.duration || len(window.ToolNames) != test.tools {
+				t.Fatalf("unexpected tool window values: %+v", window)
+			}
+		})
+	}
+}
+
+func TestBuildToolExecutionWindowsMarksLegacyAndMissingResults(t *testing.T) {
+	legacy := model.RequestLog{
+		RequestID: "legacy-source",
+		Timestamp: "2026-08-13T10:00:00Z",
+		Body:      map[string]interface{}{},
+		Response: responseLogAt(t, map[string]interface{}{
+			"content": []interface{}{map[string]interface{}{
+				"type": "tool_use", "id": "toolu-read", "name": "read", "input": map[string]interface{}{},
+			}},
+		}, 1000, "2026-08-13T10:00:01Z"),
+	}
+	result := model.RequestLog{
+		RequestID: "legacy-result",
+		Timestamp: "2026-08-13T10:00:01Z",
+		Body: map[string]interface{}{"messages": []interface{}{map[string]interface{}{
+			"role": "user", "content": []interface{}{map[string]interface{}{
+				"type": "tool_result", "tool_use_id": "toolu-read", "content": "done",
+			}},
+		}}},
+	}
+	missing := model.RequestLog{
+		RequestID: "missing-source",
+		Timestamp: "2026-08-13T10:00:02Z",
+		Body:      map[string]interface{}{},
+		Response: responseLogAt(t, map[string]interface{}{
+			"output": []interface{}{map[string]interface{}{
+				"type": "function_call", "call_id": "call-missing", "name": "shell", "arguments": `{}`,
+			}},
+		}, 1000, "2026-08-13T10:00:03Z"),
+	}
+
+	windows := buildToolExecutionWindows([]model.RequestLog{legacy, result, missing})
+	if len(windows) != 2 {
+		t.Fatalf("expected two tool windows, got %+v", windows)
+	}
+	if !windows[0].Complete || !windows[0].Approximate || windows[0].DurationMs != 0 {
+		t.Fatalf("expected a collapsed legacy window, got %+v", windows[0])
+	}
+	if windows[1].Complete {
+		t.Fatalf("expected missing result timing to be unavailable, got %+v", windows[1])
+	}
+}
+
 func responseLog(t *testing.T, body map[string]interface{}, responseTime int64) *model.ResponseLog {
 	t.Helper()
 	encoded, err := json.Marshal(body)

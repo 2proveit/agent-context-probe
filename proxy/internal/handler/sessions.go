@@ -36,9 +36,21 @@ type sessionSummary struct {
 }
 
 type sessionDetail struct {
-	Summary  sessionSummary     `json:"summary"`
-	Requests []model.RequestLog `json:"requests"`
-	Children []*sessionDetail   `json:"children,omitempty"`
+	Summary     sessionSummary        `json:"summary"`
+	Requests    []model.RequestLog    `json:"requests"`
+	ToolWindows []toolExecutionWindow `json:"toolWindows,omitempty"`
+	Children    []*sessionDetail      `json:"children,omitempty"`
+}
+
+type toolExecutionWindow struct {
+	RequestID      string   `json:"requestId"`
+	CallIDs        []string `json:"callIds,omitempty"`
+	ToolNames      []string `json:"toolNames"`
+	StartTimestamp string   `json:"startTimestamp,omitempty"`
+	EndTimestamp   string   `json:"endTimestamp,omitempty"`
+	DurationMs     int64    `json:"durationMs"`
+	Approximate    bool     `json:"approximate"`
+	Complete       bool     `json:"complete"`
 }
 
 type sessionGroup struct {
@@ -133,10 +145,11 @@ func (h *Handler) GetSessions(w http.ResponseWriter, r *http.Request) {
 
 func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[string]*sessionGroup) {
 	sort.SliceStable(requests, func(i, j int) bool {
-		if requests[i].Timestamp == requests[j].Timestamp {
+		comparison := compareTimestamps(requests[i].Timestamp, requests[j].Timestamp)
+		if comparison == 0 {
 			return requests[i].RequestID < requests[j].RequestID
 		}
-		return requests[i].Timestamp < requests[j].Timestamp
+		return comparison < 0
 	})
 
 	groups := make(map[string]*sessionGroup)
@@ -201,11 +214,11 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 	updateSessionElapsedTimes(groups)
 	for _, group := range groups {
 		sort.SliceStable(group.summary.Children, func(i, j int) bool {
-			return group.summary.Children[i].FirstTimestamp < group.summary.Children[j].FirstTimestamp
+			return compareTimestamps(group.summary.Children[i].FirstTimestamp, group.summary.Children[j].FirstTimestamp) < 0
 		})
 	}
 	sort.SliceStable(roots, func(i, j int) bool {
-		return roots[i].LastTimestamp > roots[j].LastTimestamp
+		return compareTimestamps(roots[i].LastTimestamp, roots[j].LastTimestamp) > 0
 	})
 	return roots, groups
 }
@@ -278,13 +291,128 @@ func buildSessionDetail(group *sessionGroup, groups map[string]*sessionGroup) *s
 	summary := *group.summary
 	children := summary.Children
 	summary.Children = nil
-	detail := &sessionDetail{Summary: summary, Requests: group.requests}
+	detail := &sessionDetail{
+		Summary:     summary,
+		Requests:    group.requests,
+		ToolWindows: buildToolExecutionWindows(group.requests),
+	}
 	for _, child := range children {
 		if childGroup := groups[child.SessionID]; childGroup != nil {
 			detail.Children = append(detail.Children, buildSessionDetail(childGroup, groups))
 		}
 	}
 	return detail
+}
+
+func buildToolExecutionWindows(requests []model.RequestLog) []toolExecutionWindow {
+	var windows []toolExecutionWindow
+	for index, request := range requests {
+		calls := responseToolCalls(request)
+		if len(calls) == 0 {
+			continue
+		}
+
+		window := toolExecutionWindow{
+			RequestID:   request.RequestID,
+			ToolNames:   make([]string, 0, len(calls)),
+			CallIDs:     make([]string, 0, len(calls)),
+			Approximate: true,
+		}
+		allCallsIdentified := true
+		for _, call := range calls {
+			window.ToolNames = append(window.ToolNames, call.name)
+			if call.id == "" {
+				allCallsIdentified = false
+				continue
+			}
+			window.CallIDs = append(window.CallIDs, call.id)
+		}
+
+		if !allCallsIdentified {
+			windows = append(windows, window)
+			continue
+		}
+
+		var resultRequest *model.RequestLog
+		for nextIndex := index + 1; nextIndex < len(requests); nextIndex++ {
+			resultIDs := requestToolResultIDs(requests[nextIndex])
+			if containsAllCallIDs(resultIDs, window.CallIDs) {
+				resultRequest = &requests[nextIndex]
+				break
+			}
+		}
+		if resultRequest == nil {
+			windows = append(windows, window)
+			continue
+		}
+
+		startedAt, startApproximate, startOK := requestResponseCompletedAt(request)
+		endedAt, endErr := time.Parse(time.RFC3339Nano, resultRequest.Timestamp)
+		if !startOK || endErr != nil {
+			windows = append(windows, window)
+			continue
+		}
+
+		window.Complete = true
+		window.StartTimestamp = startedAt.Format(time.RFC3339Nano)
+		window.EndTimestamp = endedAt.Format(time.RFC3339Nano)
+		window.Approximate = startApproximate || !timestampHasSubsecondPrecision(resultRequest.Timestamp)
+		if endedAt.After(startedAt) {
+			window.DurationMs = endedAt.Sub(startedAt).Milliseconds()
+		} else {
+			// Legacy second-resolution timestamps may collapse a sub-second window
+			// to zero or make it appear negative. Keep the observed boundary but do
+			// not manufacture a duration.
+			window.DurationMs = 0
+			window.Approximate = true
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
+func requestResponseCompletedAt(request model.RequestLog) (time.Time, bool, bool) {
+	startedAt, err := time.Parse(time.RFC3339Nano, request.Timestamp)
+	if err != nil || request.Response == nil {
+		return time.Time{}, true, false
+	}
+	if completedAt, parseErr := time.Parse(time.RFC3339Nano, request.Response.CompletedAt); parseErr == nil && !completedAt.Before(startedAt) {
+		return completedAt, !timestampHasSubsecondPrecision(request.Response.CompletedAt), true
+	}
+	return startedAt.Add(time.Duration(request.Response.ResponseTime) * time.Millisecond), true, true
+}
+
+func timestampHasSubsecondPrecision(value string) bool {
+	timeSeparator := strings.IndexByte(value, 'T')
+	if timeSeparator < 0 {
+		return false
+	}
+	return strings.Contains(value[timeSeparator+1:], ".")
+}
+
+func compareTimestamps(left, right string) int {
+	leftTime, leftErr := time.Parse(time.RFC3339Nano, left)
+	rightTime, rightErr := time.Parse(time.RFC3339Nano, right)
+	if leftErr == nil && rightErr == nil {
+		switch {
+		case leftTime.Before(rightTime):
+			return -1
+		case leftTime.After(rightTime):
+			return 1
+		default:
+			return 0
+		}
+	}
+	return strings.Compare(left, right)
+}
+
+func containsAllCallIDs(resultIDs map[string]bool, callIDs []string) bool {
+	for _, callID := range callIDs {
+		if !resultIDs[callID] {
+			return false
+		}
+	}
+	return len(callIDs) > 0
 }
 
 func collectTaskInvocations(groups map[string]*sessionGroup) []taskInvocation {
@@ -309,7 +437,9 @@ func collectTaskInvocations(groups map[string]*sessionGroup) []taskInvocation {
 			}
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool { return result[i].timestamp < result[j].timestamp })
+	sort.SliceStable(result, func(i, j int) bool {
+		return compareTimestamps(result[i].timestamp, result[j].timestamp) < 0
+	})
 	return result
 }
 
@@ -329,12 +459,12 @@ func linkTaskInvocations(groups map[string]*sessionGroup, invocations []taskInvo
 				if assigned[sessionID] || candidate.summary.ParentSessionID != invocation.parentSessionID {
 					continue
 				}
-				if invocation.prompt != "" && candidate.firstUserPrompt == invocation.prompt && candidate.summary.FirstTimestamp >= invocation.timestamp {
+				if invocation.prompt != "" && candidate.firstUserPrompt == invocation.prompt && compareTimestamps(candidate.summary.FirstTimestamp, invocation.timestamp) >= 0 {
 					candidates = append(candidates, candidate)
 				}
 			}
 			sort.SliceStable(candidates, func(i, j int) bool {
-				return candidates[i].summary.FirstTimestamp < candidates[j].summary.FirstTimestamp
+				return compareTimestamps(candidates[i].summary.FirstTimestamp, candidates[j].summary.FirstTimestamp) < 0
 			})
 			if len(candidates) == 1 {
 				child = candidates[0]
@@ -516,21 +646,61 @@ func responseToolCalls(request model.RequestLog) []normalizedToolCall {
 
 func findToolResult(requests []model.RequestLog, callID string) string {
 	for _, request := range requests {
-		body := objectValue(request.Body)
-		for _, item := range arrayValue(body["messages"]) {
-			message := objectValue(item)
-			if stringValue(message["role"]) == "tool" && stringValue(message["tool_call_id"]) == callID {
-				return contentText(message["content"])
-			}
-			for _, blockValue := range arrayValue(message["content"]) {
-				block := objectValue(blockValue)
-				if stringValue(block["type"]) == "tool_result" && stringValue(block["tool_use_id"]) == callID {
-					return contentText(block["content"])
-				}
+		for _, result := range requestToolResults(request) {
+			if result.id == callID {
+				return contentText(result.content)
 			}
 		}
 	}
 	return ""
+}
+
+type normalizedToolResult struct {
+	id      string
+	content interface{}
+}
+
+func requestToolResultIDs(request model.RequestLog) map[string]bool {
+	result := make(map[string]bool)
+	for _, item := range requestToolResults(request) {
+		if item.id != "" {
+			result[item.id] = true
+		}
+	}
+	return result
+}
+
+func requestToolResults(request model.RequestLog) []normalizedToolResult {
+	body := objectValue(request.Body)
+	var results []normalizedToolResult
+	for _, item := range arrayValue(body["messages"]) {
+		message := objectValue(item)
+		if stringValue(message["role"]) == "tool" {
+			results = append(results, normalizedToolResult{
+				id:      stringValue(message["tool_call_id"]),
+				content: message["content"],
+			})
+		}
+		for _, blockValue := range arrayValue(message["content"]) {
+			block := objectValue(blockValue)
+			if stringValue(block["type"]) == "tool_result" {
+				results = append(results, normalizedToolResult{
+					id:      stringValue(block["tool_use_id"]),
+					content: block["content"],
+				})
+			}
+		}
+	}
+	for _, item := range arrayValue(body["input"]) {
+		output := objectValue(item)
+		if stringValue(output["type"]) == "function_call_output" {
+			results = append(results, normalizedToolResult{
+				id:      stringValue(firstValue(output, "call_id", "id")),
+				content: output["output"],
+			})
+		}
+	}
+	return results
 }
 
 func finishReason(root map[string]interface{}) string {

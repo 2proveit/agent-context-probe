@@ -103,7 +103,7 @@ func (h *Handler) handleOpenAIRequest(
 	}
 	requestLog := &model.RequestLog{
 		RequestID:     generateRequestID(),
-		Timestamp:     time.Now().Format(time.RFC3339),
+		Timestamp:     time.Now().Format(time.RFC3339Nano),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
 		Protocol:      protocol,
@@ -133,7 +133,7 @@ func (h *Handler) handleOpenAIRequest(
 			Body:         errorBody,
 			ResponseTime: time.Since(startTime).Milliseconds(),
 			IsStreaming:  isStreaming,
-			CompletedAt:  time.Now().Format(time.RFC3339),
+			CompletedAt:  time.Now().Format(time.RFC3339Nano),
 		}
 		if updateErr := h.storageService.UpdateRequestWithResponse(requestLog); updateErr != nil {
 			h.logger.Printf("❌ Error updating failed OpenAI request: %v", updateErr)
@@ -203,7 +203,7 @@ func (h *Handler) copyOpenAIResponse(
 		Headers:       CaptureHeaders(resp.Header),
 		ResponseTime:  time.Since(startTime).Milliseconds(),
 		IsStreaming:   isStreaming,
-		CompletedAt:   time.Now().Format(time.RFC3339),
+		CompletedAt:   time.Now().Format(time.RFC3339Nano),
 		Truncated:     truncated,
 		CapturedBytes: int64(captured.Len()),
 		ResponseBytes: responseBytes,
@@ -276,7 +276,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	// Create request log with routing information
 	requestLog := &model.RequestLog{
 		RequestID:     requestID,
-		Timestamp:     time.Now().Format(time.RFC3339),
+		Timestamp:     time.Now().Format(time.RFC3339Nano),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
 		Headers:       CaptureHeaders(r.Header),
@@ -489,7 +489,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 			BodyText:     string(errorBytes),
 			ResponseTime: time.Since(startTime).Milliseconds(),
 			IsStreaming:  true,
-			CompletedAt:  time.Now().Format(time.RFC3339),
+			CompletedAt:  time.Now().Format(time.RFC3339Nano),
 		}
 
 		requestLog.Response = responseLog
@@ -649,7 +649,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		StreamingChunks: streamingChunks,
 		ResponseTime:    time.Since(startTime).Milliseconds(),
 		IsStreaming:     true,
-		CompletedAt:     time.Now().Format(time.RFC3339),
+		CompletedAt:     time.Now().Format(time.RFC3339Nano),
 	}
 
 	if scanErr != nil {
@@ -780,7 +780,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 		Headers:      CaptureHeaders(resp.Header),
 		ResponseTime: time.Since(startTime).Milliseconds(),
 		IsStreaming:  false,
-		CompletedAt:  time.Now().Format(time.RFC3339),
+		CompletedAt:  time.Now().Format(time.RFC3339Nano),
 	}
 
 	// Parse the response as AnthropicResponse for consistent structure

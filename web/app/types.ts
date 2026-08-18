@@ -67,13 +67,21 @@ export interface SessionSummary {
   sessionId: string;
   parentSessionId?: string;
   purpose?: string;
-  kind: 'root' | 'subagent' | string;
+  kind: "root" | "subagent" | string;
   title: string;
   model?: string;
   agentName?: string;
   taskCallId?: string;
   taskDescription?: string;
-  status: 'completed' | 'error' | 'interrupted' | 'pending' | 'awaiting-tool' | 'awaiting-result' | 'captured' | string;
+  status:
+    | "completed"
+    | "error"
+    | "interrupted"
+    | "pending"
+    | "awaiting-tool"
+    | "awaiting-result"
+    | "captured"
+    | string;
   resultMessage?: string;
   requestCount: number;
   toolCallCount: number;
@@ -86,8 +94,20 @@ export interface SessionSummary {
   children?: SessionSummary[];
 }
 
+export interface ToolExecutionWindow {
+  requestId: string;
+  callIds?: string[];
+  toolNames: string[];
+  startTimestamp?: string;
+  endTimestamp?: string;
+  durationMs: number;
+  approximate: boolean;
+  complete: boolean;
+}
+
 export interface SessionDetail {
   summary: SessionSummary;
   requests: RequestRecord[];
+  toolWindows?: ToolExecutionWindow[];
   children?: SessionDetail[];
 }
