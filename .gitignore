@@ -29,6 +29,7 @@ dist/
 
 # Claude-specific files
 .claude/
+.codex/
 CLAUDE.md
 
 # Test coverage
