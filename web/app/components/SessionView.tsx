@@ -51,9 +51,34 @@ interface TimelineToolResult {
   isError: boolean;
 }
 
+interface UserPromptEvent {
+  prompt: string;
+  turn: number;
+}
+
+interface UserPromptTimeline {
+  initialPrompt?: UserPromptEvent;
+  followUpsByRequest: Map<string, UserPromptEvent[]>;
+  turnByRequest: Map<string, number>;
+  turnCount: number;
+}
+
 interface WaterfallRange {
   startMs: number;
   durationMs: number;
+}
+
+interface TurnTiming extends WaterfallRange {
+  turn: number;
+  endMs: number;
+  userWaitBeforeMs: number;
+}
+
+interface SessionTimingMetrics {
+  turns: Map<number, TurnTiming>;
+  activeElapsedMs: number;
+  userWaitMs: number;
+  sessionSpanMs: number;
 }
 
 interface SessionContextMetrics {
@@ -122,8 +147,12 @@ function formatDuration(milliseconds: number) {
   if (milliseconds < 1_000) return `${milliseconds}ms`;
   const seconds = milliseconds / 1_000;
   if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds % 60)}s`;
+  const totalSeconds = Math.round(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ${remainingSeconds}s`;
 }
 
 function relativeDate(timestamp: string) {
@@ -148,22 +177,90 @@ function stripContextBlocks(value: string) {
     .trim();
 }
 
-function initialUserPrompt(requests: RequestRecord[]) {
-  for (const request of requests) {
-    for (const message of request.body?.messages ?? []) {
-      if (message.role !== "user") continue;
-      if (typeof message.content === "string")
-        return stripContextBlocks(message.content);
-      if (Array.isArray(message.content)) {
-        const text = message.content
-          .map((block: any) => block?.text ?? "")
-          .filter(Boolean)
-          .join("\n");
-        if (text) return stripContextBlocks(text);
+function userPromptText(content: unknown) {
+  if (typeof content === "string") return stripContextBlocks(content);
+  if (!Array.isArray(content)) return "";
+
+  const text = content
+    .map((block: any) => {
+      if (typeof block === "string") return block;
+      if (!block || typeof block !== "object") return "";
+      if (
+        block.type === "tool_result" ||
+        block.type === "function_call_output"
+      ) {
+        return "";
       }
+      if (
+        typeof block.text === "string" &&
+        (!block.type || block.type === "text" || block.type === "input_text")
+      ) {
+        return block.text;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  return stripContextBlocks(text);
+}
+
+function requestUserPrompts(request: RequestRecord) {
+  const prompts: string[] = [];
+  const append = (content: unknown) => {
+    const prompt = userPromptText(content);
+    if (prompt) prompts.push(prompt);
+  };
+
+  for (const message of request.body?.messages ?? []) {
+    if (message.role === "user") append(message.content);
+  }
+
+  const input = request.body?.input;
+  if (typeof input === "string") {
+    append(input);
+  } else if (Array.isArray(input)) {
+    for (const item of input) {
+      if (item?.role === "user") append(item.content);
     }
   }
-  return "";
+  return prompts;
+}
+
+function buildUserPromptTimeline(
+  requests: RequestRecord[]
+): UserPromptTimeline {
+  const seenOccurrences = new Map<string, number>();
+  const followUpsByRequest = new Map<string, UserPromptEvent[]>();
+  const turnByRequest = new Map<string, number>();
+  let initialPrompt: UserPromptEvent | undefined;
+  let turnCount = 0;
+
+  for (const request of requests) {
+    const requestOccurrences = new Map<string, number>();
+    const followUps: UserPromptEvent[] = [];
+    for (const prompt of requestUserPrompts(request)) {
+      const occurrence = (requestOccurrences.get(prompt) ?? 0) + 1;
+      requestOccurrences.set(prompt, occurrence);
+      if (occurrence <= (seenOccurrences.get(prompt) ?? 0)) continue;
+
+      turnCount += 1;
+      const event = { prompt, turn: turnCount };
+      if (!initialPrompt) initialPrompt = event;
+      else followUps.push(event);
+      seenOccurrences.set(prompt, occurrence);
+    }
+    if (followUps.length > 0) {
+      followUpsByRequest.set(request.requestId, followUps);
+    }
+    turnByRequest.set(request.requestId, Math.max(turnCount, 1));
+  }
+
+  return {
+    initialPrompt,
+    followUpsByRequest,
+    turnByRequest,
+    turnCount: Math.max(turnCount, initialPrompt ? 1 : 0),
+  };
 }
 
 function parseArguments(value: unknown) {
@@ -286,21 +383,140 @@ function modelLabel(model?: string) {
   return model;
 }
 
-function sessionWaterfallRange(
-  summary: SessionSummary,
-  requests: RequestRecord[]
-): WaterfallRange {
-  const summaryStart = Date.parse(summary.firstTimestamp);
-  const requestStart = requests.length
-    ? Date.parse(requests[0].timestamp)
+function requestCompletedMs(request: RequestRecord) {
+  const startMs = Date.parse(request.timestamp);
+  if (!Number.isFinite(startMs)) return Number.NaN;
+  const completedMs = request.response?.completedAt
+    ? Date.parse(request.response.completedAt)
     : Number.NaN;
+  const derivedMs =
+    request.response?.responseTime !== undefined
+      ? startMs + request.response.responseTime
+      : startMs;
+  return Math.max(
+    startMs,
+    Number.isFinite(completedMs) ? completedMs : startMs,
+    derivedMs
+  );
+}
+
+function sessionTimingMetrics(
+  detail: SessionDetail,
+  promptTimeline: UserPromptTimeline
+): SessionTimingMetrics {
+  const bounds = new Map<number, { startMs: number; endMs: number }>();
+  const windowsByRequest = new Map(
+    (detail.toolWindows ?? []).map((window) => [window.requestId, window])
+  );
+  const childByTaskCall = new Map(
+    (detail.children ?? [])
+      .filter((childDetail) => Boolean(childDetail.summary.taskCallId))
+      .map((childDetail) => [
+        childDetail.summary.taskCallId as string,
+        childDetail,
+      ])
+  );
+
+  for (const request of detail.requests) {
+    const startMs = Date.parse(request.timestamp);
+    if (!Number.isFinite(startMs)) continue;
+    const turn = promptTimeline.turnByRequest.get(request.requestId) ?? 1;
+    let endMs = requestCompletedMs(request);
+
+    const toolWindow = windowsByRequest.get(request.requestId);
+    const toolEndMs = toolWindow?.endTimestamp
+      ? Date.parse(toolWindow.endTimestamp)
+      : Number.NaN;
+    if (Number.isFinite(toolEndMs)) endMs = Math.max(endMs, toolEndMs);
+
+    for (const call of responseToolCalls(request)) {
+      const childDetail = call.id ? childByTaskCall.get(call.id) : undefined;
+      if (!childDetail) continue;
+      const childStartMs = Date.parse(childDetail.summary.firstTimestamp);
+      if (Number.isFinite(childStartMs)) {
+        endMs = Math.max(
+          endMs,
+          childStartMs + childDetail.summary.elapsedTimeMs
+        );
+      }
+    }
+
+    const current = bounds.get(turn);
+    bounds.set(turn, {
+      startMs: current ? Math.min(current.startMs, startMs) : startMs,
+      endMs: current ? Math.max(current.endMs, endMs) : endMs,
+    });
+  }
+
+  const orderedBounds = [...bounds.entries()].sort(
+    ([leftTurn], [rightTurn]) => leftTurn - rightTurn
+  );
+  if (orderedBounds.length === 0) {
+    const startMs = Date.parse(detail.summary.firstTimestamp);
+    const rangeStart = Number.isFinite(startMs) ? startMs : 0;
+    const durationMs = Math.max(detail.summary.elapsedTimeMs, 1);
+    const turn = {
+      turn: 1,
+      startMs: rangeStart,
+      endMs: rangeStart + durationMs,
+      durationMs,
+      userWaitBeforeMs: 0,
+    };
+    return {
+      turns: new Map([[1, turn]]),
+      activeElapsedMs: durationMs,
+      userWaitMs: 0,
+      sessionSpanMs: durationMs,
+    };
+  }
+
+  const summaryStartMs = Date.parse(detail.summary.firstTimestamp);
+  if (Number.isFinite(summaryStartMs)) {
+    orderedBounds[0][1].startMs = Math.min(
+      orderedBounds[0][1].startMs,
+      summaryStartMs
+    );
+    orderedBounds[orderedBounds.length - 1][1].endMs = Math.max(
+      orderedBounds[orderedBounds.length - 1][1].endMs,
+      summaryStartMs + detail.summary.elapsedTimeMs
+    );
+  }
+
+  const turns = new Map<number, TurnTiming>();
+  let previousEndMs: number | undefined;
+  let activeThroughMs: number | undefined;
+  let activeElapsedMs = 0;
+  let userWaitMs = 0;
+  for (const [turn, bound] of orderedBounds) {
+    const userWaitBeforeMs = previousEndMs
+      ? Math.max(bound.startMs - previousEndMs, 0)
+      : 0;
+    const durationMs = Math.max(bound.endMs - bound.startMs, 1);
+    turns.set(turn, {
+      turn,
+      startMs: bound.startMs,
+      endMs: bound.endMs,
+      durationMs,
+      userWaitBeforeMs,
+    });
+    userWaitMs += userWaitBeforeMs;
+    if (activeThroughMs === undefined) {
+      activeElapsedMs += durationMs;
+      activeThroughMs = bound.endMs;
+    } else if (bound.endMs > activeThroughMs) {
+      activeElapsedMs += bound.endMs - Math.max(bound.startMs, activeThroughMs);
+      activeThroughMs = bound.endMs;
+    }
+    previousEndMs = Math.max(previousEndMs ?? bound.endMs, bound.endMs);
+  }
+
+  const first = orderedBounds[0][1];
+  const last = orderedBounds[orderedBounds.length - 1][1];
   return {
-    startMs: Number.isFinite(summaryStart)
-      ? summaryStart
-      : Number.isFinite(requestStart)
-        ? requestStart
-        : 0,
-    durationMs: Math.max(summary.elapsedTimeMs, 1),
+    turns,
+    activeElapsedMs,
+    userWaitMs,
+    sessionSpanMs: Math.max(last.endMs - first.startMs, 1),
   };
 }
 
@@ -470,35 +686,104 @@ function WaterfallBar({
   );
 }
 
-function WaterfallAxis({ range }: { range: WaterfallRange }) {
+function WaterfallAxis({
+  range,
+  turn,
+  stepCount,
+  maxTurnDurationMs,
+  collapsed,
+  onToggle,
+}: {
+  range: WaterfallRange;
+  turn: number;
+  stepCount: number;
+  maxTurnDurationMs: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const durationPercent = Math.min(
+    100,
+    (range.durationMs / Math.max(maxTurnDurationMs, 1)) * 100
+  );
+  const durationPercentLabel = Number(durationPercent.toFixed(1)).toString();
+  const longestTurn = durationPercent >= 99.95;
+
   return (
     <TraceGridRow
-      className="mb-3 border-b border-gray-100 pb-2"
+      className={`${collapsed ? "mb-1 pb-1" : "mb-3 pb-2"} border-b border-gray-100`}
       left={
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
-          <span className="font-medium uppercase tracking-wide text-gray-400">
-            Tree + Waterfall
+        <div
+          data-turn-waterfall-axis={turn}
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500"
+        >
+          <button
+            type="button"
+            data-turn-toggle={turn}
+            aria-expanded={!collapsed}
+            aria-label={`${collapsed ? "Expand" : "Collapse"} Turn ${turn}`}
+            onClick={onToggle}
+            className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 font-medium uppercase tracking-wide text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+          >
+            {collapsed ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+            Turn {turn} · {formatDuration(range.durationMs)} ·{" "}
+            {formatCount(stepCount, "step")}
+          </button>
+          <span
+            data-turn-duration-comparison={turn}
+            data-turn-duration-percent={durationPercentLabel}
+            aria-label={`Turn ${turn} duration is ${durationPercentLabel}% of the longest turn`}
+            className="inline-flex items-center gap-1.5 normal-case tracking-normal"
+            title="Turn durations share one scale for direct comparison"
+          >
+            <span className="relative h-2 w-28 overflow-hidden rounded-full bg-gray-200">
+              <span
+                data-turn-duration-bar={turn}
+                className="absolute inset-y-0 left-0 rounded-full bg-blue-500"
+                style={{ width: `${durationPercent}%`, minWidth: "3px" }}
+              />
+            </span>
+            <span
+              className={
+                longestTurn ? "font-medium text-blue-700" : "text-gray-400"
+              }
+            >
+              {longestTurn
+                ? "Longest turn"
+                : `${durationPercentLabel}% of longest`}
+            </span>
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-4 rounded-sm bg-blue-500" />
-            Measured model
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-4 rounded-sm bg-violet-500" />
-            Measured subagent
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-4 rounded-sm border border-amber-500 bg-amber-300" />
-            Observed tool window
-          </span>
+          {!collapsed ? (
+            <>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-4 rounded-sm bg-blue-500" />
+                Measured model
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-4 rounded-sm bg-violet-500" />
+                Measured subagent
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-4 rounded-sm border border-amber-500 bg-amber-300" />
+                Observed tool window
+              </span>
+            </>
+          ) : (
+            <span className="text-gray-400">Details collapsed</span>
+          )}
         </div>
       }
       right={
-        <div className="flex justify-between text-[10px] tabular-nums text-gray-400">
-          <span>0s</span>
-          <span>{formatDuration(range.durationMs / 2)}</span>
-          <span>E2E {formatDuration(range.durationMs)}</span>
-        </div>
+        collapsed ? null : (
+          <div className="flex justify-between text-[10px] tabular-nums text-gray-400">
+            <span>0s</span>
+            <span>{formatDuration(range.durationMs / 2)}</span>
+            <span>Turn E2E {formatDuration(range.durationMs)}</span>
+          </div>
+        )
       }
     />
   );
@@ -745,6 +1030,74 @@ function AssistantTimelineItem({
   );
 }
 
+function UserWaitTimelineItem({ durationMs }: { durationMs: number }) {
+  return (
+    <div
+      data-user-wait-ms={Math.round(durationMs)}
+      className="flex min-h-8 items-center gap-2 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-1.5 text-xs text-gray-500"
+      title="Time after the previous turn ended and before the next user prompt; excluded from active E2E"
+    >
+      <Clock3 className="h-3.5 w-3.5" />
+      <span className="font-medium text-gray-700">
+        User wait {formatDuration(durationMs)}
+      </span>
+      <span>· excluded from Active E2E</span>
+    </div>
+  );
+}
+
+function UserPromptTimelineItem({
+  event,
+  label,
+}: {
+  event: UserPromptEvent;
+  label: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(event.prompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch (error) {
+      console.error("Failed to copy prompt:", error);
+    }
+  };
+
+  return (
+    <div
+      data-user-prompt-turn={event.turn}
+      className="rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3"
+    >
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-blue-700">
+          <FileText className="h-3.5 w-3.5" />
+          {label} · Turn {event.turn}
+        </div>
+        <button
+          type="button"
+          onClick={copyPrompt}
+          data-testid="copy-session-turn-prompt"
+          title={`Copy ${label}`}
+          aria-label={`Copy ${label} for turn ${event.turn}`}
+          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 transition hover:bg-white hover:text-gray-800"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+      </div>
+      <p className="whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">
+        {event.prompt}
+      </p>
+    </div>
+  );
+}
+
 function ToolTimelineItem({
   icon,
   call,
@@ -886,9 +1239,15 @@ function SessionTimeline({
   child?: boolean;
   waterfallRange?: WaterfallRange;
 }) {
-  const prompt = initialUserPrompt(detail.requests);
+  const promptTimeline = buildUserPromptTimeline(detail.requests);
+  const prompt = promptTimeline.initialPrompt?.prompt ?? "";
   const [promptCopied, setPromptCopied] = useState(false);
   const summary = detail.summary;
+  const [collapsedTurnsBySession, setCollapsedTurnsBySession] = useState<
+    Map<string, Set<number>>
+  >(() => new Map());
+  const collapsedTurns =
+    collapsedTurnsBySession.get(summary.sessionId) ?? new Set<number>();
   const style = statusStyle(summary.status);
   const contextMetrics = sessionContextMetrics(summary, detail.requests);
   const results = toolResults(detail.requests);
@@ -901,8 +1260,16 @@ function SessionTimeline({
       ])
   );
   const promptLabel = child ? "Task prompt" : "User Prompt";
-  const range =
-    waterfallRange ?? sessionWaterfallRange(summary, detail.requests);
+  const timingMetrics = sessionTimingMetrics(detail, promptTimeline);
+  const maxTurnDurationMs = Math.max(
+    ...[...timingMetrics.turns.values()].map((turn) => turn.durationMs),
+    1
+  );
+  const turnStepCounts = new Map<number, number>();
+  for (const request of detail.requests) {
+    const turn = promptTimeline.turnByRequest.get(request.requestId) ?? 1;
+    turnStepCounts.set(turn, (turnStepCounts.get(turn) ?? 0) + 1);
+  }
   const windowsByRequest = new Map(
     (detail.toolWindows ?? []).map((window) => [window.requestId, window])
   );
@@ -941,6 +1308,17 @@ function SessionTimeline({
     } catch (error) {
       console.error("Failed to copy prompt:", error);
     }
+  };
+
+  const toggleTurn = (turn: number) => {
+    setCollapsedTurnsBySession((current) => {
+      const next = new Map(current);
+      const sessionTurns = new Set(next.get(summary.sessionId) ?? []);
+      if (sessionTurns.has(turn)) sessionTurns.delete(turn);
+      else sessionTurns.add(turn);
+      next.set(summary.sessionId, sessionTurns);
+      return next;
+    });
   };
 
   return (
@@ -987,10 +1365,26 @@ function SessionTimeline({
           <SessionContextUsage metrics={contextMetrics} />
           <span
             className="inline-flex items-center gap-1"
-            title="End-to-end wall-clock span, including tool calls, subagents, and idle gaps"
+            title="Agent-active wall-clock time across turns; excludes time waiting for the next user prompt"
           >
             <Timer className="h-3.5 w-3.5" />
-            E2E {formatDuration(summary.elapsedTimeMs)}
+            Active E2E {formatDuration(timingMetrics.activeElapsedMs)}
+          </span>
+          {timingMetrics.userWaitMs > 0 ? (
+            <span
+              className="inline-flex items-center gap-1"
+              title="Time between a completed turn and the next user prompt"
+            >
+              <Clock3 className="h-3.5 w-3.5" />
+              User wait {formatDuration(timingMetrics.userWaitMs)}
+            </span>
+          ) : null}
+          <span
+            className="inline-flex items-center gap-1"
+            title="Full session wall-clock span, including user wait"
+          >
+            <Clock3 className="h-3.5 w-3.5" />
+            Span {formatDuration(timingMetrics.sessionSpanMs)}
           </span>
         </div>
       </div>
@@ -1025,8 +1419,6 @@ function SessionTimeline({
           </div>
         ) : null}
 
-        <WaterfallAxis range={range} />
-
         <div className="relative space-y-1 pl-5 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-gray-200">
           {detail.requests.map((rawRequest, index) => {
             const request = {
@@ -1052,11 +1444,42 @@ function SessionTimeline({
                     complete: false,
                   }
                 : undefined);
-            const isFinalOutput =
-              index === detail.requests.length - 1 &&
+            const turn =
+              promptTimeline.turnByRequest.get(request.requestId) ?? 1;
+            const turnCollapsed = collapsedTurns.has(turn);
+            const previousRequest = detail.requests[index - 1];
+            const previousTurn = previousRequest
+              ? promptTimeline.turnByRequest.get(previousRequest.requestId)
+              : undefined;
+            const beginsTurn = index === 0 || previousTurn !== turn;
+            const turnTiming = timingMetrics.turns.get(turn);
+            const requestStartMs = Date.parse(request.timestamp);
+            const requestRange = waterfallRange ??
+              turnTiming ?? {
+                startMs: Number.isFinite(requestStartMs) ? requestStartMs : 0,
+                durationMs: Math.max(
+                  request.response?.responseTime ?? summary.elapsedTimeMs,
+                  1
+                ),
+              };
+            if (turnCollapsed && !beginsTurn) return null;
+            const nextRequest = detail.requests[index + 1];
+            const nextTurn = nextRequest
+              ? promptTimeline.turnByRequest.get(nextRequest.requestId)
+              : undefined;
+            const isTurnOutput =
               Boolean(text) &&
-              tools.length === 0;
-            const stepLabel = `Step ${index + 1}${isFinalOutput ? " · Final Output" : ""} · Model: ${request.routedModel || request.body?.model || "Unknown"}`;
+              tools.length === 0 &&
+              !request.response?.streamError &&
+              (nextTurn === undefined || nextTurn !== turn);
+            const outputLabel = isTurnOutput
+              ? turn === promptTimeline.turnCount
+                ? "Final Output"
+                : `Turn ${turn} Output`
+              : "";
+            const stepLabel = `Step ${index + 1}${outputLabel ? ` · ${outputLabel}` : ""} · Model: ${request.routedModel || request.body?.model || "Unknown"}`;
+            const promptEvents =
+              promptTimeline.followUpsByRequest.get(request.requestId) ?? [];
             const delegatedSpans = tools
               .map((tool) =>
                 tool.id ? childByTaskCall.get(tool.id) : undefined
@@ -1065,55 +1488,107 @@ function SessionTimeline({
                 Boolean(delegated)
               );
             return (
-              <div key={request.requestId} className="relative pb-3">
-                <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-300 ring-1 ring-gray-200" />
-                <TraceGridRow
-                  className="mb-1.5"
-                  left={
-                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-[11px] tracking-wide text-gray-400">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span>{stepLabel}</span>
-                        {longestMeasured?.kind === "model" &&
-                        longestMeasured.id === request.requestId ? (
-                          <span className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
-                            Longest measured span
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="flex flex-wrap items-center justify-end gap-3">
-                        {usage ? (
-                          <span>
-                            {formatCompactNumber(usage.output)} output tokens
-                          </span>
-                        ) : null}
-                        {request.response?.responseTime !== undefined ? (
-                          <span>
-                            {formatDuration(request.response.responseTime)}{" "}
-                            model latency
-                          </span>
-                        ) : null}
-                        <span>
-                          {new Date(request.timestamp).toLocaleTimeString()}
+              <div
+                key={request.requestId}
+                className={turnCollapsed ? "" : "pb-3"}
+              >
+                {!waterfallRange &&
+                beginsTurn &&
+                turnTiming &&
+                turnTiming.userWaitBeforeMs > 0 ? (
+                  <div className="relative pb-3">
+                    <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-400 ring-1 ring-gray-200" />
+                    <TraceGridRow
+                      left={
+                        <UserWaitTimelineItem
+                          durationMs={turnTiming.userWaitBeforeMs}
+                        />
+                      }
+                    />
+                  </div>
+                ) : null}
+                {promptEvents.map((event) => (
+                  <div
+                    key={`${request.requestId}:prompt:${event.turn}`}
+                    className="relative pb-3"
+                  >
+                    <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-500 ring-1 ring-blue-200" />
+                    <TraceGridRow
+                      left={
+                        <UserPromptTimelineItem
+                          event={event}
+                          label={promptLabel}
+                        />
+                      }
+                    />
+                  </div>
+                ))}
+                {!waterfallRange && beginsTurn && turnTiming ? (
+                  <WaterfallAxis
+                    range={turnTiming}
+                    turn={turn}
+                    stepCount={turnStepCounts.get(turn) ?? 0}
+                    maxTurnDurationMs={maxTurnDurationMs}
+                    collapsed={turnCollapsed}
+                    onToggle={() => toggleTurn(turn)}
+                  />
+                ) : null}
+                <div
+                  data-turn-content={turn}
+                  className={turnCollapsed ? "hidden" : "relative"}
+                >
+                  <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-300 ring-1 ring-gray-200" />
+                  <TraceGridRow
+                    className="mb-1.5"
+                    left={
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-[11px] tracking-wide text-gray-400">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span>{stepLabel}</span>
+                          {longestMeasured?.kind === "model" &&
+                          longestMeasured.id === request.requestId ? (
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
+                              Longest measured span
+                            </span>
+                          ) : null}
                         </span>
-                      </span>
-                    </div>
-                  }
-                  right={
-                    request.response?.responseTime !== undefined ? (
-                      <WaterfallBar
-                        range={range}
-                        startTimestamp={request.timestamp}
-                        durationMs={request.response.responseTime}
-                        kind="model"
-                        approximate={
-                          !timestampHasSubsecondPrecision(request.timestamp)
-                        }
-                        label={stepLabel}
-                      />
-                    ) : null
-                  }
-                />
-                <div className="space-y-1">
+                        <span className="flex flex-wrap items-center justify-end gap-3">
+                          {usage ? (
+                            <span>
+                              {formatCompactNumber(usage.output)} output tokens
+                            </span>
+                          ) : null}
+                          {request.response?.responseTime !== undefined ? (
+                            <span>
+                              {formatDuration(request.response.responseTime)}{" "}
+                              model latency
+                            </span>
+                          ) : null}
+                          <span>
+                            {new Date(request.timestamp).toLocaleTimeString()}
+                          </span>
+                        </span>
+                      </div>
+                    }
+                    right={
+                      request.response?.responseTime !== undefined ? (
+                        <WaterfallBar
+                          range={requestRange}
+                          startTimestamp={request.timestamp}
+                          durationMs={request.response.responseTime}
+                          kind="model"
+                          approximate={
+                            !timestampHasSubsecondPrecision(request.timestamp)
+                          }
+                          label={stepLabel}
+                        />
+                      ) : null
+                    }
+                  />
+                </div>
+                <div
+                  data-turn-content={turn}
+                  className={turnCollapsed ? "hidden" : "space-y-1"}
+                >
                   {reasoning ? (
                     <TraceGridRow
                       left={
@@ -1166,7 +1641,7 @@ function SessionTimeline({
                       right={
                         toolWindow.complete ? (
                           <WaterfallBar
-                            range={range}
+                            range={requestRange}
                             startTimestamp={toolWindow.startTimestamp}
                             durationMs={toolWindow.durationMs}
                             kind="tool"
@@ -1206,7 +1681,7 @@ function SessionTimeline({
                       }
                       right={
                         <WaterfallBar
-                          range={range}
+                          range={requestRange}
                           startTimestamp={delegated.summary.firstTimestamp}
                           durationMs={delegated.summary.elapsedTimeMs}
                           kind="subagent"
@@ -1239,7 +1714,7 @@ function SessionTimeline({
                             tool.id ? childByTaskCall.get(tool.id) : undefined
                           }
                           onOpenRequest={onOpenRequest}
-                          waterfallRange={range}
+                          waterfallRange={requestRange}
                         />
                       }
                     />
