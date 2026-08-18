@@ -15,7 +15,10 @@ Agent Context Probe serves three main purposes:
 2. **Request Monitor**: Stores requests and responses in SQLite and displays
    normalized messages, tool calls, tool results, model routing, latency, token
    usage, and raw payloads in the web dashboard.
-3. **Agent Routing (Optional)**: Routes specific Claude Code subagents to
+3. **Session View**: Groups captured requests into sessions (including
+   delegated subagent sessions) and visualizes each session as a trace
+   waterfall with context/token usage and reasoning content.
+4. **Agent Routing (Optional)**: Routes specific Claude Code subagents to
    different LLM providers (for example, route `code-reviewer` to GPT-4o).
 
 ## Features
@@ -28,11 +31,15 @@ Agent Context Probe serves three main purposes:
 - **Request Filtering**: Filter history by time range, model, or request header
 - **Tool-call Inspection**: Normalized tool calls and tool results across supported protocols
 - **Streaming Inspection**: Stores raw SSE while presenting the completed structured response
+- **Session View**: Groups requests by session (via session/parent-session headers),
+  including nested subagent sessions, with a trace waterfall, context/token usage,
+  and reasoning-content breakdown
 - **Easy Setup**: One-command startup for both services
 
 ## Quick Start
 
 ### Prerequisites
+
 - **Option 1**: Go 1.20+ and Node.js 18+ (for local development)
 - **Option 2**: Docker (for containerized deployment)
 - Claude Code
@@ -42,17 +49,20 @@ Agent Context Probe serves three main purposes:
 #### Option 1: Local Development
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/2proveit/agent-context-probe.git
    cd agent-context-probe
    ```
 
 2. **Configure the proxy**
+
    ```bash
    cp config.yaml.example config.yaml
    ```
 
 3. **Install and run** (first time)
+
    ```bash
    make install  # Install all dependencies
    make dev      # Start both services
@@ -68,37 +78,41 @@ Agent Context Probe serves three main purposes:
 #### Option 2: Docker
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/2proveit/agent-context-probe.git
    cd agent-context-probe
    ```
 
 2. **Configure the proxy**
+
    ```bash
    cp config.yaml.example config.yaml
    # Edit config.yaml as needed
    ```
 
 3. **Build and run with Docker**
+
    ```bash
    # Build the image
    docker build -t agent-context-probe .
-   
+
    # Run with default settings
    docker run -p 3001:3001 -p 5173:5173 agent-context-probe
    ```
 
 4. **Run with persistent data and custom configuration**
+
    ```bash
    # Create a data directory for persistent SQLite database
    mkdir -p ./data
-   
+
    # Option 1: Run with config file (recommended)
    docker run -p 3001:3001 -p 5173:5173 \
      -v ./data:/app/data \
      -v ./config.yaml:/app/config.yaml:ro \
      agent-context-probe
-   
+
    # Option 2: Run with environment variables
    docker run -p 3001:3001 -p 5173:5173 \
      -v ./data:/app/data \
@@ -109,9 +123,10 @@ Agent Context Probe serves three main purposes:
    ```
 
 5. **Docker Compose (alternative)**
+
    ```yaml
    # docker-compose.yml
-   version: '3.8'
+   version: "3.8"
    services:
      agent-context-probe:
        build: .
@@ -120,19 +135,20 @@ Agent Context Probe serves three main purposes:
          - "5173:5173"
        volumes:
          - ./data:/app/data
-         - ./config.yaml:/app/config.yaml:ro  # Mount config file
+         - ./config.yaml:/app/config.yaml:ro # Mount config file
        environment:
          - ANTHROPIC_FORWARD_URL=https://api.anthropic.com
          - PORT=3001
          - WEB_PORT=5173
          - DB_PATH=/app/data/requests.db
    ```
-   
+
    Then run: `docker-compose up`
 
 ### Using the Proxy
 
 For Claude Code or another Anthropic-compatible client, set:
+
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:3001
 ```
@@ -163,6 +179,7 @@ the incoming authorization header for requests forwarded to the OpenAI
 provider.
 
 ### Access Points
+
 - **Web Dashboard**: http://localhost:5173
 - **API Proxy**: http://localhost:3001
 - **Health Check**: http://localhost:3001/health
@@ -197,6 +214,7 @@ make help       # Show all commands
 ### Basic Setup
 
 Create a `config.yaml` file (or copy from `config.yaml.example`):
+
 ```yaml
 server:
   port: 3001
@@ -204,9 +222,9 @@ server:
 providers:
   anthropic:
     base_url: "https://api.anthropic.com"
-    
+
   openai: # if enabling subagent routing
-    api_key: "your-openai-key"  # Or set OPENAI_API_KEY env var
+    api_key: "your-openai-key" # Or set OPENAI_API_KEY env var
     base_url: "https://api.openai.com/v1"
 
 storage:
@@ -244,9 +262,10 @@ The proxy supports routing specific Claude Code agents to different LLM provider
 #### Enabling Subagent Routing
 
 1. **Enable the feature** in `config.yaml`:
+
 ```yaml
 subagents:
-  enable: true  # Set to true to enable subagent routing
+  enable: true # Set to true to enable subagent routing
   mappings:
     code-reviewer: "gpt-4o"
     data-analyst: "o3"
@@ -261,6 +280,7 @@ subagents:
 ### Practical Examples
 
 **Example 1: Code Review Agent → GPT-4o**
+
 ```yaml
 # config.yaml
 subagents:
@@ -268,9 +288,11 @@ subagents:
   mappings:
     code-reviewer: "gpt-4o"
 ```
+
 Use case: Route code review tasks to GPT-4o for faster responses while keeping complex coding tasks on Claude.
 
-**Example 2: Reasoning Agent → O3**  
+**Example 2: Reasoning Agent → O3**
+
 ```yaml
 # config.yaml
 subagents:
@@ -278,9 +300,11 @@ subagents:
   mappings:
     deep-reasoning: "o3"
 ```
+
 Use case: Send complex reasoning tasks to O3 while using Claude for general coding.
 
 **Example 3: Multiple Agents**
+
 ```yaml
 # config.yaml
 subagents:
@@ -290,6 +314,7 @@ subagents:
     frontend-developer: "gpt-4o-mini"
     security-auditor: "gpt-4o"
 ```
+
 Use case: Different specialists for different tasks, optimizing for speed/cost/quality.
 
 ### Environment Variables
@@ -313,21 +338,22 @@ and defaults to `http://localhost:3001`.
 
 All environment variables can be configured when running the Docker container:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3001` | Proxy server port |
-| `WEB_PORT` | `5173` | Web dashboard port |
-| `READ_TIMEOUT` | `600` | Server read timeout (seconds; Docker entrypoint converts it to a duration) |
-| `WRITE_TIMEOUT` | `600` | Server write timeout (seconds; Docker entrypoint converts it to a duration) |
-| `IDLE_TIMEOUT` | `600` | Server idle timeout (seconds; Docker entrypoint converts it to a duration) |
-| `ANTHROPIC_FORWARD_URL` | `https://api.anthropic.com` | Target Anthropic API URL |
-| `ANTHROPIC_VERSION` | `2023-06-01` | Anthropic API version |
-| `ANTHROPIC_MAX_RETRIES` | `3` | Maximum retry attempts |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Target OpenAI-compatible API prefix |
-| `OPENAI_API_KEY` | empty | Optional upstream OpenAI API key |
-| `DB_PATH` | `/app/data/requests.db` | SQLite database path |
+| Variable                | Default                     | Description                                                                 |
+| ----------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `PORT`                  | `3001`                      | Proxy server port                                                           |
+| `WEB_PORT`              | `5173`                      | Web dashboard port                                                          |
+| `READ_TIMEOUT`          | `600`                       | Server read timeout (seconds; Docker entrypoint converts it to a duration)  |
+| `WRITE_TIMEOUT`         | `600`                       | Server write timeout (seconds; Docker entrypoint converts it to a duration) |
+| `IDLE_TIMEOUT`          | `600`                       | Server idle timeout (seconds; Docker entrypoint converts it to a duration)  |
+| `ANTHROPIC_FORWARD_URL` | `https://api.anthropic.com` | Target Anthropic API URL                                                    |
+| `ANTHROPIC_VERSION`     | `2023-06-01`                | Anthropic API version                                                       |
+| `ANTHROPIC_MAX_RETRIES` | `3`                         | Maximum retry attempts                                                      |
+| `OPENAI_BASE_URL`       | `https://api.openai.com/v1` | Target OpenAI-compatible API prefix                                         |
+| `OPENAI_API_KEY`        | empty                       | Optional upstream OpenAI API key                                            |
+| `DB_PATH`               | `/app/data/requests.db`     | SQLite database path                                                        |
 
 Example with custom configuration:
+
 ```bash
 docker run -p 3001:3001 -p 5173:5173 \
   -v ./data:/app/data \
@@ -337,7 +363,6 @@ docker run -p 3001:3001 -p 5173:5173 \
   -e DB_PATH=/app/data/custom.db \
   agent-context-probe
 ```
-
 
 ## Project Structure
 
@@ -358,6 +383,7 @@ agent-context-probe/
 ## Features in Detail
 
 ### Request Monitoring
+
 - All API requests logged to SQLite database
 - Request history filtering by time range, model, and header
 - Request/response body inspection
@@ -365,12 +391,27 @@ agent-context-probe/
 - Status, timing, token usage, and routing metadata
 
 ### Web Dashboard
+
 - Refreshable captured-request history
 - Interactive request explorer
 - Normalized Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses display
 - Raw request and response inspection
 - Optional raw SSE event viewer via `web.show_raw_stream_events`
 - Independently configurable raw request/response display limits (unlimited by default)
+
+### Session View
+
+Toggle the dashboard's "Sessions" tab to view captured requests grouped into
+sessions instead of a flat list. Sessions are derived from request headers
+(`X-Session-Affinity`, `X-OpenCode-Session`, `X-Claude-Code-Session-Id`, and
+`X-Parent-Session-Id` for parent/child linkage) — no additional configuration
+is required. Each session shows:
+
+- A tree + waterfall visualization of model calls, tool calls, and delegated
+  subagent calls, with measured latency/end-to-end timing per step
+- Context usage (input, cached input, output tokens, and prefix cache hit rate)
+- Reasoning ("thinking") content separated from regular output, with token counts
+- Nested subagent sessions rendered as child cards within their parent session
 
 ## License
 

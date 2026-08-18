@@ -31,6 +31,7 @@ dist/
 .claude/
 .codex/
 CLAUDE.md
+AGENTS.md
 
 # Test coverage
 coverage/
