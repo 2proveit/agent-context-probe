@@ -6,8 +6,8 @@ FROM golang:1.21-alpine AS go-builder
 
 WORKDIR /app
 
-# Install build dependencies including gcc for CGO
-RUN apk add --no-cache git gcc musl-dev sqlite-dev
+# Install Git for Go module downloads
+RUN apk add --no-cache git
 
 # Copy Go modules
 COPY proxy/go.mod proxy/go.sum ./proxy/
@@ -16,8 +16,9 @@ RUN go mod download
 
 # Copy Go source code
 COPY proxy/ ./
-# Build with CGO enabled for SQLite support
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o /app/bin/proxy cmd/proxy/main.go
+# The pure-Go SQLite driver keeps the binary portable across supported hosts.
+RUN mkdir -p /app/bin && \
+    CGO_ENABLED=0 GOOS=linux go build -o /app/bin/proxy cmd/proxy/main.go
 
 # Stage 2: Build Node.js Frontend
 FROM node:20-alpine AS node-builder
@@ -42,7 +43,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apk add --no-cache sqlite wget
+RUN apk add --no-cache wget
 
 # Create app user for security
 RUN addgroup -g 1001 -S appgroup && \

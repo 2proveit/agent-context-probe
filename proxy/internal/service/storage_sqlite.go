@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/seifghazi/claude-code-monitor/internal/config"
 	"github.com/seifghazi/claude-code-monitor/internal/model"
@@ -18,7 +18,7 @@ type sqliteStorageService struct {
 }
 
 func NewSQLiteStorageService(cfg *config.StorageConfig) (StorageService, error) {
-	db, err := sql.Open("sqlite3", cfg.DBPath)
+	db, err := sql.Open("sqlite", cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

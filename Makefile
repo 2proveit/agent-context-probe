@@ -8,13 +8,14 @@ install:
 	@echo "📦 Installing Go dependencies..."
 	cd proxy && go mod download
 	@echo "📦 Installing Node dependencies..."
-	cd web && npm install
+	cd web && npm ci
 
 # Build both services
 build: build-proxy build-web
 
 build-proxy:
 	@echo "🔨 Building proxy server..."
+	mkdir -p bin
 	cd proxy && go build -o ../bin/proxy cmd/proxy/main.go
 
 build-web:
