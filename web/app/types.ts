@@ -80,6 +80,7 @@ export interface SessionSummary {
   inputTokens: number;
   outputTokens: number;
   responseTimeMs: number;
+  elapsedTimeMs: number;
   firstTimestamp: string;
   lastTimestamp: string;
   children?: SessionSummary[];

@@ -267,7 +267,6 @@ function TimelineItem({
   onOpenRequest: (request: RequestRecord) => void;
   tone?: 'default' | 'error' | 'task';
 }) {
-  const usage = getUsage(request.response?.body);
   const toneClasses = tone === 'error'
     ? 'border-red-200 bg-red-50/60 hover:bg-red-50'
     : tone === 'task'
@@ -289,8 +288,6 @@ function TimelineItem({
         </span>
       </span>
       <span className="hidden shrink-0 items-center gap-3 text-xs text-gray-400 sm:flex">
-        {usage ? <span>~{formatCompactNumber(usage.output)} tokens</span> : null}
-        {request.response?.responseTime !== undefined ? <span>{formatDuration(request.response.responseTime)}</span> : null}
         <span className={`h-2 w-2 rounded-full ${request.response?.streamError ? 'bg-red-500' : 'bg-emerald-500'}`} />
         <ChevronRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
       </span>
@@ -341,7 +338,6 @@ function AssistantTimelineItem({
           {tokenCount !== undefined ? (
             <span>{formatCompactNumber(tokenCount)} {reasoning ? 'reasoning' : 'content'} tokens</span>
           ) : null}
-          {request.response?.responseTime !== undefined ? <span>{formatDuration(request.response.responseTime)}</span> : null}
           <span className={`h-2 w-2 rounded-full ${request.response?.streamError ? 'bg-red-500' : 'bg-emerald-500'}`} />
           <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </span>
@@ -355,9 +351,6 @@ function AssistantTimelineItem({
           <div className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm leading-6 text-gray-700 scrollbar-custom">
             {text}
           </div>
-          {request.response?.responseTime !== undefined ? (
-            <div className="mt-2 text-xs text-gray-400">Duration: {formatDuration(request.response.responseTime)}</div>
-          ) : null}
         </div>
       ) : null}
     </div>
@@ -381,7 +374,6 @@ function ToolTimelineItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
-  const usage = getUsage(request.response?.body);
   const task = call.name === 'task';
   const delegatedStatus = delegatedSession?.summary.status;
   const resultDot = delegatedStatus === 'error' || delegatedStatus === 'interrupted' || result?.isError
@@ -416,8 +408,6 @@ function ToolTimelineItem({
           </span>
         </span>
         <span className="hidden shrink-0 items-center gap-3 text-xs text-gray-400 sm:flex">
-          {usage ? <span>~{formatCompactNumber(usage.output)} tokens</span> : null}
-          {request.response?.responseTime !== undefined ? <span>{formatDuration(request.response.responseTime)}</span> : null}
           <span className={`h-2 w-2 rounded-full ${resultDot}`} />
           <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </span>
@@ -450,10 +440,6 @@ function ToolTimelineItem({
               </pre>
             ) : null}
           </div>
-
-          {request.response?.responseTime !== undefined ? (
-            <div className="mt-2 text-xs text-gray-400">Duration: {formatDuration(request.response.responseTime)}</div>
-          ) : null}
 
           {task && delegatedSession ? (
             <div className="mt-4">
@@ -525,7 +511,12 @@ function SessionTimeline({
           <span>{formatCount(summary.toolCallCount, 'tool call')}</span>
           <span>{formatCount(summary.requestCount, 'step')}</span>
           <span className="inline-flex items-center gap-1"><Zap className="h-3.5 w-3.5" />{formatCompactNumber(totalTokens)} tokens</span>
-          <span className="inline-flex items-center gap-1"><Timer className="h-3.5 w-3.5" />{formatDuration(summary.responseTimeMs)}</span>
+          <span
+            className="inline-flex items-center gap-1"
+            title="End-to-end wall-clock span, including tool calls, subagents, and idle gaps"
+          >
+            <Timer className="h-3.5 w-3.5" />E2E {formatDuration(summary.elapsedTimeMs)}
+          </span>
         </div>
       </div>
 
@@ -560,12 +551,19 @@ function SessionTimeline({
             const text = response.output;
             const reasoning = response.reasoning;
             const tools = responseToolCalls(request);
+            const usage = getUsage(request.response?.body);
             return (
               <div key={request.requestId} className="relative pb-3">
                 <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-300 ring-1 ring-gray-200" />
-                <div className="mb-1.5 flex items-center justify-between px-3 text-[11px] tracking-wide text-gray-400">
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-[11px] tracking-wide text-gray-400">
                   <span>Step {index + 1} · Model: {request.routedModel || request.body?.model || 'Unknown'}</span>
-                  <span>{new Date(request.timestamp).toLocaleTimeString()}</span>
+                  <span className="flex flex-wrap items-center justify-end gap-3">
+                    {usage ? <span>{formatCompactNumber(usage.output)} output tokens</span> : null}
+                    {request.response?.responseTime !== undefined ? (
+                      <span>{formatDuration(request.response.responseTime)} model latency</span>
+                    ) : null}
+                    <span>{new Date(request.timestamp).toLocaleTimeString()}</span>
+                  </span>
                 </div>
                 <div className="space-y-1">
                   {reasoning ? (

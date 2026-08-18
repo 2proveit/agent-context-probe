@@ -29,6 +29,7 @@ type sessionSummary struct {
 	InputTokens     int64             `json:"inputTokens"`
 	OutputTokens    int64             `json:"outputTokens"`
 	ResponseTimeMs  int64             `json:"responseTimeMs"`
+	ElapsedTimeMs   int64             `json:"elapsedTimeMs"`
 	FirstTimestamp  string            `json:"firstTimestamp"`
 	LastTimestamp   string            `json:"lastTimestamp"`
 	Children        []*sessionSummary `json:"children,omitempty"`
@@ -44,6 +45,9 @@ type sessionGroup struct {
 	summary         *sessionSummary
 	requests        []model.RequestLog
 	firstUserPrompt string
+	firstObservedAt time.Time
+	lastObservedAt  time.Time
+	treeObservedAt  time.Time
 }
 
 type taskInvocation struct {
@@ -158,6 +162,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		}
 
 		group.requests = append(group.requests, request)
+		observeRequestWindow(group, request)
 		group.summary.RequestCount++
 		group.summary.LastTimestamp = request.Timestamp
 		if group.summary.Model == "" {
@@ -193,6 +198,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		}
 		parent.summary.Children = append(parent.summary.Children, group.summary)
 	}
+	updateSessionElapsedTimes(groups)
 	for _, group := range groups {
 		sort.SliceStable(group.summary.Children, func(i, j int) bool {
 			return group.summary.Children[i].FirstTimestamp < group.summary.Children[j].FirstTimestamp
@@ -202,6 +208,70 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		return roots[i].LastTimestamp > roots[j].LastTimestamp
 	})
 	return roots, groups
+}
+
+func observeRequestWindow(group *sessionGroup, request model.RequestLog) {
+	startedAt, err := time.Parse(time.RFC3339Nano, request.Timestamp)
+	if err != nil {
+		return
+	}
+	if group.firstObservedAt.IsZero() || startedAt.Before(group.firstObservedAt) {
+		group.firstObservedAt = startedAt
+	}
+
+	completedAt := startedAt
+	if request.Response != nil {
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, request.Response.CompletedAt); parseErr == nil && parsed.After(completedAt) {
+			completedAt = parsed
+		}
+		derivedCompletion := startedAt.Add(time.Duration(request.Response.ResponseTime) * time.Millisecond)
+		if derivedCompletion.After(completedAt) {
+			completedAt = derivedCompletion
+		}
+	}
+	if group.lastObservedAt.IsZero() || completedAt.After(group.lastObservedAt) {
+		group.lastObservedAt = completedAt
+	}
+}
+
+func updateSessionElapsedTimes(groups map[string]*sessionGroup) {
+	calculated := make(map[string]bool)
+	visiting := make(map[string]bool)
+	var update func(*sessionGroup) time.Time
+	update = func(group *sessionGroup) time.Time {
+		sessionID := group.summary.SessionID
+		if calculated[sessionID] {
+			return group.treeObservedAt
+		}
+		if visiting[sessionID] {
+			return group.lastObservedAt
+		}
+
+		visiting[sessionID] = true
+		latest := group.lastObservedAt
+		for _, childSummary := range group.summary.Children {
+			child := groups[childSummary.SessionID]
+			if child == nil {
+				continue
+			}
+			childLatest := update(child)
+			if childLatest.After(latest) {
+				latest = childLatest
+			}
+		}
+		delete(visiting, sessionID)
+
+		group.treeObservedAt = latest
+		if !group.firstObservedAt.IsZero() && !latest.Before(group.firstObservedAt) {
+			group.summary.ElapsedTimeMs = latest.Sub(group.firstObservedAt).Milliseconds()
+		}
+		calculated[sessionID] = true
+		return latest
+	}
+
+	for _, group := range groups {
+		update(group)
+	}
 }
 
 func buildSessionDetail(group *sessionGroup, groups map[string]*sessionGroup) *sessionDetail {

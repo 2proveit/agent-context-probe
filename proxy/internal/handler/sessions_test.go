@@ -141,6 +141,50 @@ func TestBuildSessionGroupsLinksTaskChildAndResult(t *testing.T) {
 	}
 }
 
+func TestBuildSessionGroupsCalculatesTreeElapsedTime(t *testing.T) {
+	requests := []model.RequestLog{
+		{
+			RequestID: "root-1",
+			Timestamp: "2026-08-13T10:00:00Z",
+			Headers: map[string][]string{
+				"X-Session-Affinity": {"session-root"},
+			},
+			Body: map[string]interface{}{"model": "iFinD-Atlas"},
+			Response: responseLogAt(t, map[string]interface{}{
+				"usage": map[string]interface{}{"input_tokens": 10.0, "output_tokens": 5.0},
+			}, 1000, "2026-08-13T10:00:01Z"),
+		},
+		{
+			RequestID: "child-1",
+			Timestamp: "2026-08-13T10:00:02Z",
+			Headers: map[string][]string{
+				"X-Session-Affinity":  {"session-child"},
+				"X-Parent-Session-Id": {"session-root"},
+			},
+			Body: map[string]interface{}{"model": "deepseek-v4-flash"},
+			Response: responseLogAt(t, map[string]interface{}{
+				"usage": map[string]interface{}{"input_tokens": 20.0, "output_tokens": 8.0},
+			}, 4000, "2026-08-13T10:00:06Z"),
+		},
+	}
+
+	_, groups := buildSessionGroups(requests)
+	root := groups["session-root"]
+	child := groups["session-child"]
+	if root == nil || child == nil {
+		t.Fatalf("expected root and child sessions, got %+v", groups)
+	}
+	if root.summary.ResponseTimeMs != 1000 {
+		t.Fatalf("expected cumulative root model latency to remain 1000ms, got %d", root.summary.ResponseTimeMs)
+	}
+	if root.summary.ElapsedTimeMs != 6000 {
+		t.Fatalf("expected root E2E to include child completion, got %dms", root.summary.ElapsedTimeMs)
+	}
+	if child.summary.ElapsedTimeMs != 4000 {
+		t.Fatalf("expected child E2E to use its own observed span, got %dms", child.summary.ElapsedTimeMs)
+	}
+}
+
 func responseLog(t *testing.T, body map[string]interface{}, responseTime int64) *model.ResponseLog {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -153,4 +197,11 @@ func responseLog(t *testing.T, body map[string]interface{}, responseTime int64) 
 		ResponseTime: responseTime,
 		IsStreaming:  true,
 	}
+}
+
+func responseLogAt(t *testing.T, body map[string]interface{}, responseTime int64, completedAt string) *model.ResponseLog {
+	t.Helper()
+	response := responseLog(t, body, responseTime)
+	response.CompletedAt = completedAt
+	return response
 }
