@@ -118,6 +118,233 @@ test("renders model metrics once per step instead of once per tool call", () => 
   assert.doesNotMatch(markup, /~281 tokens/);
 });
 
+test("renders tool calls already present before the first captured model call", () => {
+  const request: RequestRecord = {
+    id: "request-with-history",
+    requestId: "request-with-history",
+    timestamp: "2026-08-19T14:57:53.111114+08:00",
+    method: "POST",
+    endpoint: "/v1/chat/completions",
+    headers: {},
+    routedModel: "iFinD-Atlas",
+    body: {
+      model: "iFinD-Atlas",
+      messages: [
+        { role: "user", content: "Search for the annual report" },
+        {
+          role: "assistant",
+          content: "I will search for it.",
+          tool_calls: [
+            {
+              id: "call-history-search",
+              function: {
+                name: "web_search",
+                arguments: '{"query":"annual report"}',
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-history-search",
+          content: "search results",
+        },
+      ],
+    },
+    response: {
+      statusCode: 200,
+      headers: {},
+      body: {
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: "Finished" },
+          },
+        ],
+        usage: { prompt_tokens: 20, completion_tokens: 4 },
+      },
+      responseTime: 1200,
+      isStreaming: false,
+      completedAt: "2026-08-19T14:57:54.311114+08:00",
+    },
+  };
+  const summary: SessionSummary = {
+    sessionId: "session-with-history",
+    kind: "root",
+    title: "Search for the annual report",
+    model: "iFinD-Atlas",
+    status: "completed",
+    requestCount: 1,
+    toolCallCount: 1,
+    inputTokens: 20,
+    outputTokens: 4,
+    responseTimeMs: 1200,
+    elapsedTimeMs: 1200,
+    firstTimestamp: request.timestamp,
+    lastTimestamp: request.timestamp,
+  };
+
+  const markup = renderToStaticMarkup(
+    <SessionView
+      sessions={[summary]}
+      total={1}
+      selectedSessionId={summary.sessionId}
+      detail={{ summary, requests: [request] }}
+      isLoadingList={false}
+      isLoadingDetail={false}
+      onSelectSession={() => undefined}
+      onOpenRequest={() => undefined}
+    />
+  );
+
+  assert.match(markup, /Before first captured model call/);
+  assert.match(markup, /Reconstructed from request history/);
+  assert.match(markup, /Timing unavailable/);
+  assert.match(markup, /data-tool-call-id="call-history-search"/);
+  assert.match(markup, />web_search</);
+  assert.match(markup, /annual report/);
+  assert.match(markup, /1 tool call/);
+});
+
+test("renders pre-captured Anthropic and Responses tool calls", () => {
+  const cases: Array<{
+    sessionId: string;
+    endpoint: string;
+    callId: string;
+    toolName: string;
+    body: RequestRecord["body"];
+    responseBody: unknown;
+  }> = [
+    {
+      sessionId: "anthropic-history-session",
+      endpoint: "/v1/messages",
+      callId: "toolu-history-read",
+      toolName: "read",
+      body: {
+        model: "claude-test",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Read the file" }],
+          },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-history-read",
+                name: "read",
+                input: { filePath: "/tmp/report.md" },
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "toolu-history-read",
+                content: "file contents",
+              },
+            ],
+          },
+        ],
+      },
+      responseBody: {
+        content: [{ type: "text", text: "Finished" }],
+        stop_reason: "end_turn",
+      },
+    },
+    {
+      sessionId: "responses-history-session",
+      endpoint: "/v1/responses",
+      callId: "call-history-shell",
+      toolName: "shell",
+      body: {
+        model: "gpt-test",
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Run the command" }],
+          },
+          {
+            type: "function_call",
+            call_id: "call-history-shell",
+            name: "shell",
+            arguments: '{"command":"pwd"}',
+          },
+          {
+            type: "function_call_output",
+            call_id: "call-history-shell",
+            output: "/tmp",
+          },
+        ],
+      },
+      responseBody: {
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "Finished" }],
+          },
+        ],
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const request: RequestRecord = {
+      id: `${testCase.sessionId}-request`,
+      requestId: `${testCase.sessionId}-request`,
+      timestamp: "2026-08-19T15:00:00.000Z",
+      method: "POST",
+      endpoint: testCase.endpoint,
+      headers: {},
+      body: testCase.body,
+      response: {
+        statusCode: 200,
+        headers: {},
+        body: testCase.responseBody,
+        responseTime: 1000,
+        isStreaming: false,
+        completedAt: "2026-08-19T15:00:01.000Z",
+      },
+    };
+    const summary: SessionSummary = {
+      sessionId: testCase.sessionId,
+      kind: "root",
+      title: testCase.sessionId,
+      status: "completed",
+      requestCount: 1,
+      toolCallCount: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      responseTimeMs: 1000,
+      elapsedTimeMs: 1000,
+      firstTimestamp: request.timestamp,
+      lastTimestamp: request.timestamp,
+    };
+
+    const markup = renderToStaticMarkup(
+      <SessionView
+        sessions={[summary]}
+        total={1}
+        selectedSessionId={summary.sessionId}
+        detail={{ summary, requests: [request] }}
+        isLoadingList={false}
+        isLoadingDetail={false}
+        onSelectSession={() => undefined}
+        onOpenRequest={() => undefined}
+      />
+    );
+
+    assert.match(markup, /Before first captured model call/);
+    assert.match(markup, new RegExp(`data-tool-call-id="${testCase.callId}"`));
+    assert.match(markup, new RegExp(`>${testCase.toolName}<`));
+  }
+});
+
 test("labels the last text-only model step as Final Output", () => {
   const request: RequestRecord = {
     id: "request-final",
