@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,16 +33,14 @@ type Options struct {
 }
 
 type Handler struct {
-	anthropicService service.AnthropicService
-	storageService   service.StorageService
-	modelRouter      *service.ModelRouter
-	openAIProvider   openAIForwarder
-	logger           *log.Logger
-	options          Options
+	storageService service.StorageService
+	modelRouter    *service.ModelRouter
+	openAIProvider openAIForwarder
+	logger         *log.Logger
+	options        Options
 }
 
 func New(
-	anthropicService service.AnthropicService,
 	storageService service.StorageService,
 	logger *log.Logger,
 	modelRouter *service.ModelRouter,
@@ -51,12 +48,11 @@ func New(
 	options Options,
 ) *Handler {
 	return &Handler{
-		anthropicService: anthropicService,
-		storageService:   storageService,
-		modelRouter:      modelRouter,
-		openAIProvider:   openAIProvider,
-		logger:           logger,
-		options:          options,
+		storageService: storageService,
+		modelRouter:    modelRouter,
+		openAIProvider: openAIProvider,
+		logger:         logger,
+		options:        options,
 	}
 }
 
@@ -348,18 +344,6 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, response)
 }
 
-func (h *Handler) UI(w http.ResponseWriter, r *http.Request) {
-	htmlContent, err := os.ReadFile("index.html")
-	if err != nil {
-		// Error reading index.html
-		http.Error(w, "UI not available", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html")
-	w.Write(htmlContent)
-}
-
 func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -481,7 +465,6 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Anthropic API error: %d", resp.StatusCode)
 		errorBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("Error details: %s", string(errorBytes))
 
 		responseLog := &model.ResponseLog{
 			StatusCode:   resp.StatusCode,
@@ -792,7 +775,6 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 		} else {
 			// If parsing fails, store as text but log the error
 			log.Printf("⚠️ Failed to parse Anthropic response: %v", err)
-			log.Printf("📄 Response body (first 500 chars): %s", string(responseBytes[:min(500, len(responseBytes))]))
 			responseLog.BodyText = string(responseBytes)
 		}
 	} else {
@@ -806,7 +788,7 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("❌ Anthropic API error: %d %s", resp.StatusCode, string(responseBytes))
+		log.Printf("❌ Anthropic API error: %d", resp.StatusCode)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(responseBytes)
@@ -815,14 +797,6 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(responseBytes)
-}
-
-// Helper function to get minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func generateRequestID() string {

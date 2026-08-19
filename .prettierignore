@@ -1,0 +1,4 @@
+# Preserve legacy formatting until these large UI modules receive a dedicated
+# formatting-only change. This keeps functional commits reviewable.
+web/app/components/RequestDetailContent.tsx
+web/app/routes/_index.tsx

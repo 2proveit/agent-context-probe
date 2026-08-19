@@ -1,9 +1,13 @@
 package handler
 
-import "net/http"
+import (
+	"net/http"
 
-// CaptureHeaders clones headers before logging/storage. Header values are
-// intentionally retained so the monitor can display the exact exchange.
+	"github.com/seifghazi/claude-code-monitor/internal/capture"
+)
+
+// CaptureHeaders clones headers and removes credentials before persistence.
+// Providers continue to receive the original request headers.
 func CaptureHeaders(headers http.Header) http.Header {
-	return headers.Clone()
+	return capture.Headers(headers)
 }

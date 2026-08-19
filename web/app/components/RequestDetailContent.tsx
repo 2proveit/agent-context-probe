@@ -8,7 +8,6 @@ import {
   Brain, 
   User, 
   Bot, 
-  Target,
   Copy,
   Check,
   ArrowLeftRight,
@@ -32,7 +31,6 @@ import type { RequestRecord } from '../types';
 
 interface RequestDetailContentProps {
   request: RequestRecord;
-  onGrade: () => void;
 }
 
 const DETAIL_SECTION_CLASS = 'overflow-hidden rounded-lg border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]';
@@ -62,7 +60,7 @@ function DetailSectionIcon({
   );
 }
 
-export default function RequestDetailContent({ request, onGrade }: RequestDetailContentProps) {
+export default function RequestDetailContent({ request }: RequestDetailContentProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     overview: true,
     conversation: true,
@@ -119,13 +117,6 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
     return colors[method as keyof typeof colors] || 'bg-gray-50 text-gray-700 border border-gray-200';
   };
 
-  const canGradeRequest = (request: RequestRecord) => {
-    return request.body && 
-           request.body.messages && 
-           request.body.messages.some(msg => msg.role === 'user') &&
-           request.endpoint.includes('/messages');
-  };
-
   return (
     <div className="space-y-3">
       {/* Request Overview */}
@@ -137,15 +128,6 @@ export default function RequestDetailContent({ request, onGrade }: RequestDetail
             </DetailSectionIcon>
             <span>Request Overview</span>
           </h4>
-          {/* {!request.promptGrade && canGradeRequest(request) && (
-            <button 
-              onClick={onGrade}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
-            >
-              <Target className="w-4 h-4" />
-              <span>Grade This Prompt</span>
-            </button>
-          )} */}
         </div>
         <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm lg:grid-cols-2">
           <div className="space-y-3">
