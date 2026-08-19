@@ -303,6 +303,60 @@ function responseToolCalls(request: RequestRecord): TimelineToolCall[] {
   return calls;
 }
 
+function requestHistoryToolCalls(request: RequestRecord): TimelineToolCall[] {
+  const calls: TimelineToolCall[] = [];
+  for (const message of request.body?.messages ?? []) {
+    for (const item of message.tool_calls ?? []) {
+      calls.push({
+        id: item?.id ?? item?.call_id,
+        name: item?.function?.name ?? "tool",
+        arguments: parseArguments(item?.function?.arguments),
+      });
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (const item of message.content) {
+      if (item?.type !== "tool_use") continue;
+      calls.push({
+        id: item.id,
+        name: item.name ?? "tool",
+        arguments: item.input,
+      });
+    }
+  }
+
+  const input = request.body?.input;
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      if (item?.type !== "function_call") continue;
+      calls.push({
+        id: item.call_id ?? item.id,
+        name: item.name ?? "tool",
+        arguments: parseArguments(item.arguments),
+      });
+    }
+  }
+  return calls;
+}
+
+function preCapturedToolCalls(requests: RequestRecord[]): TimelineToolCall[] {
+  const firstRequest = requests[0];
+  if (!firstRequest) return [];
+
+  const responseCallIds = new Set(
+    requests
+      .flatMap(responseToolCalls)
+      .map((call) => call.id)
+      .filter((id): id is string => Boolean(id))
+  );
+  const seen = new Set<string>();
+  return requestHistoryToolCalls(firstRequest).filter((call) => {
+    if (!call.id) return true;
+    if (responseCallIds.has(call.id) || seen.has(call.id)) return false;
+    seen.add(call.id);
+    return true;
+  });
+}
+
 function toolResults(requests: RequestRecord[]) {
   const results = new Map<string, TimelineToolResult>();
   const save = (id: unknown, content: unknown, isError = false) => {
@@ -1251,6 +1305,8 @@ function SessionTimeline({
   const style = statusStyle(summary.status);
   const contextMetrics = sessionContextMetrics(summary, detail.requests);
   const results = toolResults(detail.requests);
+  const firstRequest = detail.requests[0];
+  const preCapturedTools = preCapturedToolCalls(detail.requests);
   const childByTaskCall = new Map(
     (detail.children ?? [])
       .filter((childDetail) => Boolean(childDetail.summary.taskCallId))
@@ -1261,6 +1317,17 @@ function SessionTimeline({
   );
   const promptLabel = child ? "Task prompt" : "User Prompt";
   const timingMetrics = sessionTimingMetrics(detail, promptTimeline);
+  const firstRequestStartMs = firstRequest
+    ? Date.parse(firstRequest.timestamp)
+    : Number.NaN;
+  const preCapturedRange = waterfallRange ??
+    timingMetrics.turns.get(1) ?? {
+      startMs: Number.isFinite(firstRequestStartMs) ? firstRequestStartMs : 0,
+      durationMs: Math.max(
+        firstRequest?.response?.responseTime ?? summary.elapsedTimeMs,
+        1
+      ),
+    };
   const maxTurnDurationMs = Math.max(
     ...[...timingMetrics.turns.values()].map((turn) => turn.durationMs),
     1
@@ -1420,6 +1487,60 @@ function SessionTimeline({
         ) : null}
 
         <div className="relative space-y-1 pl-5 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-gray-200">
+          {firstRequest && preCapturedTools.length > 0 ? (
+            <div
+              data-testid="pre-captured-tool-calls"
+              className="relative pb-3"
+            >
+              <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-amber-400 ring-1 ring-amber-200" />
+              <TraceGridRow
+                className="mb-1"
+                left={
+                  <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs">
+                    <Clock3 className="h-3.5 w-3.5 text-amber-700" />
+                    <span className="font-medium text-gray-800">
+                      Before first captured model call
+                    </span>
+                    <span className="text-gray-500">
+                      {formatCount(preCapturedTools.length, "tool call")} ·
+                      Reconstructed from request history · Timing unavailable
+                    </span>
+                  </div>
+                }
+                right={
+                  <div className="pt-2 text-center text-[11px] text-gray-400">
+                    Timing unavailable
+                  </div>
+                }
+              />
+              <div className="space-y-1">
+                {preCapturedTools.map((tool, toolIndex) => (
+                  <TraceGridRow
+                    key={tool.id || `pre-captured-${tool.name}-${toolIndex}`}
+                    left={
+                      <ToolTimelineItem
+                        icon={
+                          tool.name === "task" ? (
+                            <GitBranch className="h-4 w-4" />
+                          ) : (
+                            <Wrench className="h-4 w-4" />
+                          )
+                        }
+                        call={tool}
+                        result={tool.id ? results.get(tool.id) : undefined}
+                        request={firstRequest}
+                        delegatedSession={
+                          tool.id ? childByTaskCall.get(tool.id) : undefined
+                        }
+                        onOpenRequest={onOpenRequest}
+                        waterfallRange={preCapturedRange}
+                      />
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
           {detail.requests.map((rawRequest, index) => {
             const request = {
               ...rawRequest,

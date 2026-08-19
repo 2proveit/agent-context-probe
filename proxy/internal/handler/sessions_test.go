@@ -141,6 +141,111 @@ func TestBuildSessionGroupsLinksTaskChildAndResult(t *testing.T) {
 	}
 }
 
+func TestBuildSessionGroupsCountsPreCapturedToolCallsAcrossProtocols(t *testing.T) {
+	requests := []model.RequestLog{
+		{
+			RequestID: "chat-history",
+			Timestamp: "2026-08-19T14:57:53.111114+08:00",
+			Headers: map[string][]string{
+				"X-Session-Affinity": {"chat-history-session"},
+			},
+			Body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": "search"},
+					map[string]interface{}{
+						"role": "assistant",
+						"tool_calls": []interface{}{map[string]interface{}{
+							"id": "call-history-search",
+							"function": map[string]interface{}{
+								"name": "web_search", "arguments": `{"query":"annual report"}`,
+							},
+						}},
+					},
+					map[string]interface{}{
+						"role": "tool", "tool_call_id": "call-history-search", "content": "results",
+					},
+				},
+			},
+			Response: responseLog(t, map[string]interface{}{
+				"choices": []interface{}{map[string]interface{}{
+					"finish_reason": "tool_calls",
+					"message": map[string]interface{}{"tool_calls": []interface{}{map[string]interface{}{
+						"id":       "call-live-fetch",
+						"function": map[string]interface{}{"name": "web_fetch", "arguments": `{}`},
+					}}},
+				}},
+			}, 1000),
+		},
+		{
+			RequestID: "anthropic-history",
+			Timestamp: "2026-08-19T15:00:00Z",
+			Headers: map[string][]string{
+				"X-Session-Affinity": {"anthropic-history-session"},
+			},
+			Body: map[string]interface{}{
+				"messages": []interface{}{
+					map[string]interface{}{
+						"role": "assistant",
+						"content": []interface{}{map[string]interface{}{
+							"type": "tool_use", "id": "toolu-history-read", "name": "read", "input": map[string]interface{}{},
+						}},
+					},
+					map[string]interface{}{
+						"role": "user",
+						"content": []interface{}{map[string]interface{}{
+							"type": "tool_result", "tool_use_id": "toolu-history-read", "content": "done",
+						}},
+					},
+				},
+			},
+			Response: responseLog(t, map[string]interface{}{
+				"stop_reason": "end_turn",
+			}, 1000),
+		},
+		{
+			RequestID: "responses-history",
+			Timestamp: "2026-08-19T15:01:00Z",
+			Headers: map[string][]string{
+				"X-Session-Affinity": {"responses-history-session"},
+			},
+			Body: map[string]interface{}{
+				"input": []interface{}{
+					map[string]interface{}{
+						"type": "function_call", "call_id": "call-history-shell", "name": "shell", "arguments": `{}`,
+					},
+					map[string]interface{}{
+						"type": "function_call_output", "call_id": "call-history-shell", "output": "done",
+					},
+				},
+			},
+			Response: responseLog(t, map[string]interface{}{
+				"status": "completed",
+			}, 1000),
+		},
+	}
+
+	_, groups := buildSessionGroups(requests)
+	tests := []struct {
+		sessionID string
+		want      int
+	}{
+		{sessionID: "chat-history-session", want: 2},
+		{sessionID: "anthropic-history-session", want: 1},
+		{sessionID: "responses-history-session", want: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.sessionID, func(t *testing.T) {
+			group := groups[test.sessionID]
+			if group == nil {
+				t.Fatalf("expected session %q", test.sessionID)
+			}
+			if group.summary.ToolCallCount != test.want {
+				t.Fatalf("expected %d tool calls, got %+v", test.want, group.summary)
+			}
+		})
+	}
+}
+
 func TestBuildSessionGroupsCalculatesTreeElapsedTime(t *testing.T) {
 	requests := []model.RequestLog{
 		{

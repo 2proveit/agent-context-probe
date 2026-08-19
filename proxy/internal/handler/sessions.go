@@ -193,6 +193,9 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 			group.summary.Status = status
 		}
 	}
+	for _, group := range groups {
+		group.summary.ToolCallCount += len(preCapturedToolCalls(group.requests))
+	}
 
 	invocations := collectTaskInvocations(groups)
 	linkTaskInvocations(groups, invocations)
@@ -631,6 +634,74 @@ func responseToolCalls(request model.RequestLog) []normalizedToolCall {
 		})
 	}
 	for _, item := range arrayValue(root["output"]) {
+		block := objectValue(item)
+		if stringValue(block["type"]) != "function_call" {
+			continue
+		}
+		calls = append(calls, normalizedToolCall{
+			id:        stringValue(firstValue(block, "call_id", "id")),
+			name:      stringValue(block["name"]),
+			arguments: parseArguments(block["arguments"]),
+		})
+	}
+	return calls
+}
+
+func preCapturedToolCalls(requests []model.RequestLog) []normalizedToolCall {
+	if len(requests) == 0 {
+		return nil
+	}
+
+	responseCallIDs := make(map[string]bool)
+	for _, request := range requests {
+		for _, call := range responseToolCalls(request) {
+			if call.id != "" {
+				responseCallIDs[call.id] = true
+			}
+		}
+	}
+
+	seen := make(map[string]bool)
+	var calls []normalizedToolCall
+	for _, call := range requestHistoryToolCalls(requests[0]) {
+		if call.id != "" {
+			if responseCallIDs[call.id] || seen[call.id] {
+				continue
+			}
+			seen[call.id] = true
+		}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
+func requestHistoryToolCalls(request model.RequestLog) []normalizedToolCall {
+	body := objectValue(request.Body)
+	var calls []normalizedToolCall
+	for _, item := range arrayValue(body["messages"]) {
+		message := objectValue(item)
+		for _, toolCallValue := range arrayValue(message["tool_calls"]) {
+			call := objectValue(toolCallValue)
+			function := objectValue(call["function"])
+			calls = append(calls, normalizedToolCall{
+				id:        stringValue(firstValue(call, "id", "call_id")),
+				name:      stringValue(function["name"]),
+				arguments: parseArguments(function["arguments"]),
+			})
+		}
+		for _, blockValue := range arrayValue(message["content"]) {
+			block := objectValue(blockValue)
+			if stringValue(block["type"]) != "tool_use" {
+				continue
+			}
+			calls = append(calls, normalizedToolCall{
+				id:        stringValue(block["id"]),
+				name:      stringValue(block["name"]),
+				arguments: objectValue(block["input"]),
+			})
+		}
+	}
+	for _, item := range arrayValue(body["input"]) {
 		block := objectValue(item)
 		if stringValue(block["type"]) != "function_call" {
 			continue
