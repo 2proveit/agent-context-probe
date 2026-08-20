@@ -356,6 +356,16 @@ agent-context-probe/
 └── run.sh
 ```
 
+## Acknowledgements
+
+Agent Context Probe was originally derived from
+[seifghazi/claude-code-proxy](https://github.com/seifghazi/claude-code-proxy)
+and has since evolved into an independently maintained project.
+
+We thank Seif Ghazi and the original contributors for their work. The original
+project and Agent Context Probe are distributed under the MIT License. See
+[LICENSE](LICENSE) for the applicable copyright and license notices.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
