@@ -3,7 +3,7 @@
 set -eu
 
 if ! command -v go >/dev/null 2>&1; then
-    echo "Go 1.20 or newer is required to build from source." >&2
+    echo "Go 1.21 or newer is required to build from source." >&2
     exit 1
 fi
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then

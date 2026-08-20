@@ -6,7 +6,7 @@ Set-Location $repoRoot
 
 foreach ($command in @("go", "node", "npm.cmd")) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
-        throw "$command was not found. Go 1.20+ and Node.js 20+ are required to build from source."
+        throw "$command was not found. Go 1.21+ and Node.js 20+ are required to build from source."
     }
 }
 
