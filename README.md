@@ -31,7 +31,7 @@ The proxy, management API, health check, and Dashboard share
 
 ## Build from source
 
-Building requires Go 1.20 or later and Node.js 20 or later. The resulting
+Building requires Go 1.21 or later and Node.js 20 or later. The resulting
 executable does not require Go, Node.js, npm, or a separate SQLite library.
 
 ### macOS and Linux
