@@ -1,4 +1,3 @@
-import type { MetaFunction } from "@remix-run/node";
 import { useState, useEffect, useTransition } from "react";
 import { 
   RefreshCw, 
@@ -21,13 +20,6 @@ import {
   getProtocolBadgeClasses,
   getUsage,
 } from "../utils/models";
-
-export const meta: MetaFunction = () => {
-  return [
-    { title: "API Request Monitor" },
-    { name: "description", content: "Real-time API request visualization" },
-  ];
-};
 
 type TimeRange = "all" | "15m" | "1h" | "6h" | "24h" | "7d";
 type ViewMode = "sessions" | "requests";
@@ -281,47 +273,6 @@ export default function Index() {
   const closeModal = () => {
     setIsModalOpen(false);
     setSelectedRequest(null);
-  };
-
-  const canGradeRequest = (request: RequestRecord) => {
-    return request.body && 
-           request.body.messages && 
-           request.body.messages.some(msg => msg.role === 'user') &&
-           request.endpoint.includes('/messages');
-  };
-
-  const gradeRequest = async (requestId: string) => {
-    const request = requests.find(r => r.id === requestId);
-    if (!request || !canGradeRequest(request)) return;
-
-    try {
-      const response = await fetch('/api/grade-prompt', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messages: request.body!.messages,
-          systemMessages: request.body!.system || [],
-          requestId: request.timestamp
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const promptGrade = await response.json();
-      
-      // Update the request with the new grading
-      const updatedRequests = requests.map(r => 
-        r.id === requestId ? { ...r, promptGrade } : r
-      );
-      setRequests(updatedRequests);
-      
-    } catch (error) {
-      console.error('Failed to grade prompt:', error);
-    }
   };
 
   useEffect(() => {
@@ -721,7 +672,7 @@ export default function Index() {
               data-testid="request-detail-scroll"
               className="min-h-0 flex-1 overflow-y-auto bg-gray-50/70 p-3 scrollbar-custom sm:p-5"
             >
-              <RequestDetailContent request={selectedRequest} onGrade={() => gradeRequest(selectedRequest.id)} />
+              <RequestDetailContent request={selectedRequest} />
             </div>
           </div>
         </div>

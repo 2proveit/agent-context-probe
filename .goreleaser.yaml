@@ -1,0 +1,120 @@
+version: 2
+
+project_name: agent-context-probe
+
+gomod:
+  dir: proxy
+
+before:
+  hooks:
+    - ./scripts/release-prepare.sh
+
+builds:
+  - id: agent-context-probe
+    dir: proxy
+    main: ./cmd/agent-context-probe
+    binary: agent-context-probe
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.Commit={{ .FullCommit }}
+      - -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.BuildTime={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: release
+    ids:
+      - agent-context-probe
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: README.md
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: LICENSE
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: config.yaml.example
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: scripts/install.sh
+        info:
+          owner: root
+          group: root
+          mode: 0755
+          mtime: "{{ .CommitDate }}"
+      - src: scripts/uninstall.sh
+        info:
+          owner: root
+          group: root
+          mode: 0755
+          mtime: "{{ .CommitDate }}"
+      - src: scripts/install.ps1
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: scripts/uninstall.ps1
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+
+checksum:
+  name_template: agent-context-probe_checksums.txt
+  algorithm: sha256
+
+sboms:
+  - id: release-archives
+    artifacts: archive
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^Merge "
+
+release:
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

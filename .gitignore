@@ -1,7 +1,10 @@
 # Dependencies
 node_modules/
 /web/build/
+/web/dist/
 /web/.cache/
+/proxy/internal/webui/dist/*
+!/proxy/internal/webui/dist/placeholder.txt
 
 # Environment files
 .env
@@ -11,13 +14,22 @@ node_modules/
 # Database and logs
 requests/*
 requests.db
+exports/
+requests-*.json
+system-prompts-*.json
+tool-descriptions-*.json
 *.log
 proxy.log
 
 # Build artifacts
 bin/
-dist/
+/proxy/proxy
+/dist/
 *.exe
+
+# Local browser QA artifacts
+.playwright-cli/
+output/playwright/
 
 # IDE and system files
 .DS_Store

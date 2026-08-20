@@ -59,6 +59,10 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 requests/
+exports/
+requests-*.json
+system-prompts-*.json
+tool-descriptions-*.json
 
 # Web specific
 web/.cache/
@@ -71,6 +75,7 @@ web/yarn-error.log*
 
 # Go specific
 proxy/vendor/
+proxy/internal/webui/dist/
 *.test
 *.prof
 coverage.txt

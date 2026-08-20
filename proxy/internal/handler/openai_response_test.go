@@ -99,17 +99,21 @@ func TestCopyOpenAIResponseMarksTruncatedCaptureWithoutPartialResult(t *testing.
 	}
 }
 
-func TestCaptureHeadersRetainsAuthorizationAndCookies(t *testing.T) {
+func TestCaptureHeadersRedactsAuthorizationAndCookies(t *testing.T) {
 	headers := http.Header{
 		"Authorization": []string{"Bearer visible-token"},
 		"Cookie":        []string{"session=visible"},
+		"X-Trace-Id":    []string{"trace-123"},
 	}
 	captured := CaptureHeaders(headers)
-	if captured.Get("Authorization") != "Bearer visible-token" {
-		t.Fatal("authorization header was changed")
+	if captured.Get("Authorization") != "[REDACTED]" {
+		t.Fatal("authorization header was not redacted")
 	}
-	if captured.Get("Cookie") != "session=visible" {
-		t.Fatal("cookie header was changed")
+	if captured.Get("Cookie") != "[REDACTED]" {
+		t.Fatal("cookie header was not redacted")
+	}
+	if captured.Get("X-Trace-Id") != "trace-123" {
+		t.Fatal("non-sensitive header was changed")
 	}
 	captured.Set("Authorization", "changed")
 	if headers.Get("Authorization") != "Bearer visible-token" {

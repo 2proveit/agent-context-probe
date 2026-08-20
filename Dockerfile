@@ -1,27 +1,5 @@
-# Multi-stage Dockerfile for Claude Code Proxy
-# Builds both Go proxy server and Remix frontend in a single container
-
-# Stage 1: Build Go Backend
-FROM golang:1.21-alpine AS go-builder
-
-WORKDIR /app
-
-# Install Git for Go module downloads
-RUN apk add --no-cache git
-
-# Copy Go modules
-COPY proxy/go.mod proxy/go.sum ./proxy/
-WORKDIR /app/proxy
-RUN go mod download
-
-# Copy Go source code
-COPY proxy/ ./
-# The pure-Go SQLite driver keeps the binary portable across supported hosts.
-RUN mkdir -p /app/bin && \
-    CGO_ENABLED=0 GOOS=linux go build -o /app/bin/proxy cmd/proxy/main.go
-
-# Stage 2: Build Node.js Frontend
-FROM node:20-alpine AS node-builder
+# Build the SPA assets. Node.js is not present in the runtime image.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS node-builder
 
 WORKDIR /app
 
@@ -34,50 +12,54 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Clean up dev dependencies after build
-RUN npm ci --only=production && npm cache clean --force
+# Embed the SPA assets in the Go executable.
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS go-builder
 
-# Stage 3: Production Runtime
-FROM node:20-alpine
+WORKDIR /app
+RUN apk add --no-cache git
+COPY proxy/go.mod proxy/go.sum ./proxy/
+WORKDIR /app/proxy
+RUN go mod download
+COPY proxy/ ./
+COPY --from=node-builder /app/proxy/internal/webui/dist/client ./internal/webui/dist/client
+ARG VERSION=dev
+ARG GIT_COMMIT=none
+ARG BUILD_TIME=unknown
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN mkdir -p /app/bin && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+      -ldflags "-s -w -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.Version=${VERSION} -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.Commit=${GIT_COMMIT} -X github.com/seifghazi/claude-code-monitor/internal/buildinfo.BuildTime=${BUILD_TIME}" \
+      -o /app/bin/agent-context-probe ./cmd/agent-context-probe
+
+# Single-process production runtime.
+FROM alpine:3.21
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache wget
+RUN apk add --no-cache ca-certificates wget
 
 # Create app user for security
 RUN addgroup -g 1001 -S appgroup && \
     adduser -S appuser -u 1001 -G appgroup
 
-# Copy built Go binary
-COPY --from=go-builder /app/bin/proxy ./bin/proxy
-RUN chmod +x ./bin/proxy
-
-# Copy built Remix application
-COPY --from=node-builder /app/web/build ./web/build
-COPY --from=node-builder /app/web/package*.json ./web/
-COPY --from=node-builder /app/web/node_modules ./web/node_modules
+COPY --from=go-builder /app/bin/agent-context-probe /usr/local/bin/agent-context-probe
 
 # Create data directory for SQLite database
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
-# Copy startup script
-COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh
-
 # Environment variables with defaults
+ENV ACP_HOST=0.0.0.0
 ENV PORT=3001
-ENV WEB_PORT=5173
-ENV READ_TIMEOUT=600
-ENV WRITE_TIMEOUT=600
-ENV IDLE_TIMEOUT=600
+ENV READ_TIMEOUT=600s
+ENV WRITE_TIMEOUT=600s
+ENV IDLE_TIMEOUT=600s
 ENV ANTHROPIC_FORWARD_URL=https://api.anthropic.com
 ENV ANTHROPIC_VERSION=2023-06-01
 ENV ANTHROPIC_MAX_RETRIES=3
 ENV DB_PATH=/app/data/requests.db
 
-# Expose ports
-EXPOSE 3001 5173
+EXPOSE 3001
 
 # Switch to app user
 USER appuser
@@ -86,5 +68,4 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget -qO- http://localhost:3001/health > /dev/null || exit 1
 
-# Start both services
-CMD ["./docker-entrypoint.sh"]
+CMD ["agent-context-probe", "start"]

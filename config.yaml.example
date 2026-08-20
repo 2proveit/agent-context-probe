@@ -4,8 +4,16 @@
 
 # Server configuration
 server:
+  # Interface to listen on. The default accepts connections only from this host.
+  host: "127.0.0.1"
+
   # Port to listen on (default: 3001)
   port: 3001
+
+  # Required when host is not loopback. Remote clients send this value in the
+  # X-Agent-Context-Probe-Token header; browser users sign in at /auth.
+  # Prefer ACP_ACCESS_TOKEN so the secret is not stored in this file.
+  # access_token: "replace-with-at-least-16-characters"
   
   # Timeout configurations
   timeouts:
@@ -41,8 +49,10 @@ providers:
 
 # Storage configuration
 storage:
-  # SQLite database path for storing request history
-  db_path: "requests.db"
+  # Omit these fields to use the operating system standard data and backup
+  # directories. Relative YAML paths resolve from this config file's directory.
+  # db_path: "/custom/path/requests.db"
+  # backup_dir: "/custom/path/backups"
 
   # Maximum request/response bytes retained in the database.
   # The proxied exchange is not truncated. Set to 0 for unlimited capture.
@@ -86,7 +96,12 @@ subagents:
 # The following environment variables will override the YAML configuration:
 #
 # Server:
-#   PORT                      - Server port
+#   ACP_CONFIG                - Explicit configuration file path
+#   ACP_DATA_DIR              - Data directory when DB_PATH is unset
+#   ACP_HOST                  - Listen host (default: 127.0.0.1)
+#   ACP_PORT                  - Server port
+#   PORT                      - Backward-compatible server port alias
+#   ACP_ACCESS_TOKEN          - Required for non-loopback listening
 #   READ_TIMEOUT             - Read timeout duration
 #   WRITE_TIMEOUT            - Write timeout duration
 #   IDLE_TIMEOUT             - Idle timeout duration

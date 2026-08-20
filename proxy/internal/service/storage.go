@@ -6,6 +6,7 @@ import (
 )
 
 type StorageService interface {
+	Close() error
 	SaveRequest(request *model.RequestLog) (string, error)
 	GetRequests(page, limit int) ([]model.RequestLog, int, error)
 	ClearRequests() (int, error)

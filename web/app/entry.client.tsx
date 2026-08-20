@@ -1,18 +1,16 @@
-/**
- * By default, Remix will handle hydrating your app on the client for you.
- * You are free to delete this file if you'd like to, but if you ever want it revealed again, you can run `npx remix reveal` ✨
- * For more information, see https://remix.run/file-conventions/entry.client
- */
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
 
-import { RemixBrowser } from "@remix-run/react";
-import { startTransition, StrictMode } from "react";
-import { hydrateRoot } from "react-dom/client";
+import Index from "./routes/_index";
+import "./tailwind.css";
 
-startTransition(() => {
-  hydrateRoot(
-    document,
-    <StrictMode>
-      <RemixBrowser />
-    </StrictMode>
-  );
-});
+const root = document.getElementById("root");
+if (!root) {
+  throw new Error("root element is missing");
+}
+
+createRoot(root).render(
+  <StrictMode>
+    <Index />
+  </StrictMode>
+);
