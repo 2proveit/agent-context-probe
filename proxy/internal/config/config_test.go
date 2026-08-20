@@ -294,3 +294,28 @@ func TestEnvironmentAliasesHaveDeterministicPriority(t *testing.T) {
 		t.Fatalf("DB_PATH did not override ACP_DATA_DIR: %s", resolution.Config.Storage.DBPath)
 	}
 }
+
+func TestExplicitDataDirectoryDoesNotRequireStandardPaths(t *testing.T) {
+	clearConfigEnvironment(t)
+	dataDir := filepath.Join(t.TempDir(), "explicit-data")
+	emptyStandard := StandardPaths{}
+
+	resolution, err := Resolve(LoadOptions{
+		DataDir:       dataDir,
+		StandardPaths: &emptyStandard,
+	})
+	if err != nil {
+		t.Fatalf("resolve explicit data directory: %v", err)
+	}
+	if resolution.Config.Storage.DBPath != filepath.Join(dataDir, "requests.db") {
+		t.Fatalf("unexpected database path: %s", resolution.Config.Storage.DBPath)
+	}
+}
+
+func TestMissingStandardAndExplicitDataPathsFailsClearly(t *testing.T) {
+	clearConfigEnvironment(t)
+	emptyStandard := StandardPaths{}
+	if _, err := Resolve(LoadOptions{StandardPaths: &emptyStandard}); err == nil {
+		t.Fatal("missing standard and explicit data paths must fail")
+	}
+}

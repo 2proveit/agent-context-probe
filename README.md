@@ -65,6 +65,7 @@ LICENSE, and install/uninstall scripts. On macOS and Linux:
 
 ```bash
 ./scripts/install.sh --version 0.1.0-beta.1
+export PATH="$HOME/.local/bin:$PATH" # if the installer reports it is missing
 agent-context-probe version
 ```
 
@@ -77,7 +78,8 @@ agent-context-probe.exe version
 
 Running the installer again atomically replaces the executable and preserves
 configuration, request history, and backups. The uninstall scripts remove only
-the executable; user data is retained.
+the executable; user data is retained. The Windows installer adds its install
+directory to the user PATH and the Windows uninstaller removes that exact entry.
 
 ## CLI
 
@@ -316,12 +318,13 @@ goreleaser check
 goreleaser release --snapshot --clean --skip=publish
 ```
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`. The workflow first
-builds snapshot artifacts and tests install/start/upgrade/uninstall without Go,
-Node.js, or npm in `PATH`; only then does it publish the GitHub Release and the
-`linux/amd64` plus `linux/arm64` GHCR image. Archives include SHA-256 checksums
-and SPDX JSON SBOMs; GitHub generates provenance attestations for release
-artifacts and the container image.
+Pushing a `v*` tag triggers `.github/workflows/release.yml`. The workflow builds
+the tag artifacts once without publishing, tests those exact archives through
+install/start/upgrade/uninstall without Go, Node.js, or npm in `PATH`, then
+uploads the same files to the GitHub Release and publishes the `linux/amd64`
+plus `linux/arm64` GHCR image. Archives include SHA-256 checksums and SPDX JSON
+SBOMs; GitHub generates provenance attestations for release artifacts and the
+container image.
 
 Validation commands:
 

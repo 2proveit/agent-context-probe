@@ -2,7 +2,8 @@ param(
     [string]$Version = "latest",
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\Agent Context Probe",
     [string]$ArchivePath = "",
-    [string]$ChecksumsPath = ""
+    [string]$ChecksumsPath = "",
+    [switch]$SkipPathUpdate
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,6 +56,21 @@ try {
     Move-Item $staged (Join-Path $InstallDir "agent-context-probe.exe") -Force
     Write-Host "Installed $(Join-Path $InstallDir 'agent-context-probe.exe')"
     Write-Host "Configuration and data will use the operating system standard user directories."
+    if (-not $SkipPathUpdate) {
+        $normalizedInstallDir = $InstallDir.TrimEnd('\')
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $pathEntries = @($userPath -split ';' | Where-Object { $_ })
+        $alreadyPresent = $pathEntries | Where-Object { $_.TrimEnd('\') -ieq $normalizedInstallDir }
+        if (-not $alreadyPresent) {
+            $newUserPath = (@($pathEntries) + $InstallDir) -join ';'
+            [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+            New-Item -ItemType File -Force -Path (Join-Path $InstallDir ".agent-context-probe-path-added") | Out-Null
+            Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use it."
+        }
+        if (-not (($env:PATH -split ';') | Where-Object { $_.TrimEnd('\') -ieq $normalizedInstallDir })) {
+            $env:PATH = "$InstallDir;$env:PATH"
+        }
+    }
 }
 finally {
     Remove-Item $temporaryDir -Recurse -Force -ErrorAction SilentlyContinue

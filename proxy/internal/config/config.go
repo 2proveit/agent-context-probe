@@ -111,14 +111,11 @@ func LoadWithOptions(options LoadOptions) (*Config, error) {
 
 func Resolve(options LoadOptions) (*Resolution, error) {
 	var standard StandardPaths
+	var standardErr error
 	if options.StandardPaths != nil {
 		standard = *options.StandardPaths
 	} else {
-		var err error
-		standard, err = ResolveStandardPaths()
-		if err != nil {
-			return nil, err
-		}
+		standard, standardErr = ResolveStandardPaths()
 	}
 
 	cfg := &Config{
@@ -265,6 +262,12 @@ func Resolve(options LoadOptions) (*Resolution, error) {
 		resolution.PortSource = "cli"
 	}
 
+	if cfg.Storage.DBPath == "" {
+		if standardErr != nil {
+			return nil, fmt.Errorf("standard data directory is unavailable: %w; use --data-dir, DB_PATH, or storage.db_path", standardErr)
+		}
+		return nil, fmt.Errorf("standard data directory is unavailable; use --data-dir, DB_PATH, or storage.db_path")
+	}
 	if !filepath.IsAbs(cfg.Storage.DBPath) {
 		cfg.Storage.DBPath, err = absolutePath(cfg.Storage.DBPath)
 		if err != nil {
@@ -323,10 +326,12 @@ func resolveConfigPath(requested, standard string) (path, source string, explici
 			return "", "environment", true, err
 		}
 	}
-	if _, err := os.Stat(standard); err == nil {
-		return standard, "standard", false, nil
-	} else if !os.IsNotExist(err) {
-		return "", "standard", false, err
+	if standard != "" {
+		if _, err := os.Stat(standard); err == nil {
+			return standard, "standard", false, nil
+		} else if !os.IsNotExist(err) {
+			return "", "standard", false, err
+		}
 	}
 	return "", "default", false, nil
 }

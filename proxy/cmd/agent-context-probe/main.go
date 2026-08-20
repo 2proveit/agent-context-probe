@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +32,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		printUsage(stdout)
+		return 0
+	}
 	command := "start"
 	if len(args) > 0 && args[0] != "" && args[0][0] != '-' {
 		command = args[0]
@@ -39,14 +44,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch command {
 	case "start":
-		options, ok := parseOptions("start", args, stderr)
-		if !ok {
+		options, err := parseOptions("start", args, stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		if err != nil {
 			return 2
 		}
 		return start(options, stdout, stderr)
 	case "doctor":
-		options, ok := parseOptions("doctor", args, stderr)
-		if !ok {
+		options, err := parseOptions("doctor", args, stderr)
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		if err != nil {
 			return 2
 		}
 		return doctor(options, stdout, stderr)
@@ -68,7 +79,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func parseOptions(command string, args []string, stderr io.Writer) (commandOptions, bool) {
+func parseOptions(command string, args []string, stderr io.Writer) (commandOptions, error) {
 	var options commandOptions
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -77,13 +88,13 @@ func parseOptions(command string, args []string, stderr io.Writer) (commandOptio
 	flags.StringVar(&options.host, "host", "", "listen host override")
 	flags.StringVar(&options.port, "port", "", "listen port override")
 	if err := flags.Parse(args); err != nil {
-		return commandOptions{}, false
+		return commandOptions{}, err
 	}
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "%s received unexpected arguments: %v\n", command, flags.Args())
-		return commandOptions{}, false
+		return commandOptions{}, fmt.Errorf("unexpected arguments")
 	}
-	return options, true
+	return options, nil
 }
 
 func resolveConfig(options commandOptions) (*config.Resolution, error) {
@@ -172,6 +183,9 @@ func doctor(options commandOptions, stdout, stderr io.Writer) int {
 
 func displayConfigPath(resolution *config.Resolution) string {
 	if resolution.ConfigPath == "" {
+		if resolution.Standard.ConfigFile == "" {
+			return "not set; defaults and environment are valid"
+		}
 		return resolution.Standard.ConfigFile + " (not present; defaults and environment are valid)"
 	}
 	return resolution.ConfigPath

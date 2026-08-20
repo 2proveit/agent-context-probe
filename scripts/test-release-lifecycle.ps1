@@ -20,7 +20,7 @@ try {
         }
     }
 
-    & "$PSScriptRoot\install.ps1" -ArchivePath $ArchivePath -InstallDir $installDir
+    & "$PSScriptRoot\install.ps1" -ArchivePath $ArchivePath -InstallDir $installDir -SkipPathUpdate
     $binary = Join-Path $installDir "agent-context-probe.exe"
     $versionOutput = & $binary version
     if (-not ($versionOutput | Select-String "agent-context-probe")) {
@@ -65,13 +65,13 @@ try {
     }
 
     Set-Content -Path $binary -Value "broken executable"
-    & "$PSScriptRoot\install.ps1" -ArchivePath $ArchivePath -InstallDir $installDir
+    & "$PSScriptRoot\install.ps1" -ArchivePath $ArchivePath -InstallDir $installDir -SkipPathUpdate
     if (-not (& $binary version | Select-String "agent-context-probe")) {
         throw "Upgrade did not replace the binary"
     }
     Start-And-Check 39112
 
-    & "$PSScriptRoot\uninstall.ps1" -InstallDir $installDir
+    & "$PSScriptRoot\uninstall.ps1" -InstallDir $installDir -SkipPathUpdate
     if (Test-Path $binary) {
         throw "Uninstall did not remove the binary"
     }

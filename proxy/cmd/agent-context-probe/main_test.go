@@ -27,3 +27,14 @@ func TestUnknownCommandShowsUsage(t *testing.T) {
 		t.Fatalf("unexpected error output: %q", stderr.String())
 	}
 }
+
+func TestHelpFlagsReturnSuccess(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"start", "--help"}, {"doctor", "-h"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(args, &stdout, &stderr); code != 0 {
+				t.Fatalf("run(%v) exit code = %d, stderr = %q", args, code, stderr.String())
+			}
+		})
+	}
+}

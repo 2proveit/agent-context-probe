@@ -120,3 +120,11 @@ mv -f "$staged" "$install_dir/agent-context-probe"
 
 echo "Installed $install_dir/agent-context-probe"
 echo "Configuration and data will use the operating system standard user directories."
+case ":${PATH:-}:" in
+    *":$install_dir:"*) ;;
+    *)
+        echo "The install directory is not currently in PATH."
+        echo "Run: export PATH=\"$install_dir:\$PATH\""
+        echo "Add the same line to your shell profile to make it persistent."
+        ;;
+esac

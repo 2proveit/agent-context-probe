@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   verify-artifacts:
-    name: Build and verify release artifacts
+    name: Build tag artifacts without publishing
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -40,12 +40,12 @@ jobs:
           distribution: goreleaser
           version: v2.17.1
           args: check
-      - name: Build snapshot artifacts
+      - name: Build tag artifacts
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.17.1
-          args: release --snapshot --clean --skip=publish
+          args: release --clean --skip=publish
       - name: Verify checksums and archive contents
         shell: bash
         run: |
@@ -151,31 +151,11 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          fetch-depth: 0
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: proxy/go.mod
-          cache-dependency-path: proxy/go.sum
-      - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install Syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
-      - name: Publish release with GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
-        with:
-          distribution: goreleaser
-          version: v2.17.1
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: release-dist
+          path: dist
       - name: Attest release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -184,6 +164,26 @@ jobs:
             dist/*.zip
             dist/*checksums.txt
             dist/*.sbom.json
+      - name: Create GitHub Release from verified artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.zip dist/*checksums.txt dist/*.sbom.json)
+          test "${#assets[@]}" -gt 0
+          release_args=(
+            release create "$GITHUB_REF_NAME"
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --generate-notes
+            --title "Agent Context Probe $GITHUB_REF_NAME"
+          )
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          gh "${release_args[@]}" "${assets[@]}"
 
   publish-image:
     name: Publish GHCR image
