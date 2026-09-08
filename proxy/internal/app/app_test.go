@@ -93,3 +93,43 @@ func TestApplicationEnforcesRemoteAccessToken(t *testing.T) {
 		t.Fatalf("authorized status = %d: %s", authorized.Code, authorized.Body.String())
 	}
 }
+
+func TestModelsFallbackUsesProviderConfiguration(t *testing.T) {
+	for _, configured := range []string{"anthropic", "openai"} {
+		t.Run(configured, func(t *testing.T) {
+			const body = `{"data":[{"id":"model-1"}]}`
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/gateway/v1/models" {
+					t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, body)
+			}))
+			defer upstream.Close()
+			cfg := testConfig(t)
+			request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			if configured == "anthropic" {
+				cfg.Providers.Anthropic.BaseURL = upstream.URL + "/gateway"
+				request.Header.Set("Authorization", "Bearer client-key")
+			} else {
+				cfg.Providers.OpenAI.BaseURL = upstream.URL + "/gateway/v1"
+				request.Header.Set("X-Api-Key", "client-key")
+			}
+			application, err := New(cfg, log.New(io.Discard, "", 0), Options{Assets: testAssets()})
+			if err != nil {
+				t.Fatalf("create application: %v", err)
+			}
+			defer application.Close()
+			recorder := httptest.NewRecorder()
+			application.Handler().ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK || recorder.Body.String() != body {
+				t.Fatalf("models response = %d %s", recorder.Code, recorder.Body.String())
+			}
+			history := httptest.NewRecorder()
+			application.Handler().ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/api/requests", nil))
+			if history.Code != http.StatusOK || !strings.Contains(history.Body.String(), `"protocol":"`+configured+`_models"`) {
+				t.Fatalf("unexpected history: %d %s", history.Code, history.Body.String())
+			}
+		})
+	}
+}

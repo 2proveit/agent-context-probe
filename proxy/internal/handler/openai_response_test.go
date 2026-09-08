@@ -132,7 +132,7 @@ func TestEnrichOpenAIRequestParsesHistoricalStreamWithoutWriting(t *testing.T) {
 				"data: [DONE]\n\n",
 		},
 	}
-	enrichOpenAIRequestForDisplay(request)
+	(&Handler{}).enrichOpenAIRequestForDisplay(request)
 	if request.Protocol != openAIProtocolChat {
 		t.Fatalf("protocol was not derived: %s", request.Protocol)
 	}
@@ -280,11 +280,13 @@ func savedOpenAIRequest(t *testing.T, storage service.StorageService) *model.Req
 }
 
 type stubModelsForwarder struct {
-	resp *http.Response
-	err  error
+	calls int
+	resp  *http.Response
+	err   error
 }
 
 func (s *stubModelsForwarder) ForwardModels(context.Context, *http.Request) (*http.Response, error) {
+	s.calls++
 	return s.resp, s.err
 }
 
@@ -297,142 +299,257 @@ func (s *stubModelsForwarder) ForwardResponses(context.Context, *http.Request) (
 }
 
 func TestModelsForwardsAndCaptures(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		status      int
-		body        string
-		contentType string
-		err         error
+	for _, route := range []struct {
+		name     string
+		headers  http.Header
+		protocol string
 	}{
-		{
-			name: "success", status: http.StatusOK, contentType: "application/json",
-			body: "{\n  \"object\": \"list\", \"data\": [{\"id\":\"model-1\",\"object\":\"model\"}]\n}\n",
-		},
-		{
-			name: "not found", status: http.StatusNotFound, contentType: "application/json",
-			body: `{"error":{"message":"models unavailable","type":"not_found"}}`,
-		},
-		{
-			name: "unauthorized", status: http.StatusUnauthorized, contentType: "application/json",
-			body: `{"error":{"message":"invalid API key","type":"authentication_error"}}`,
-		},
-		{
-			name: "non-JSON error", status: http.StatusServiceUnavailable, contentType: "text/plain",
-			body: "upstream unavailable\n",
-		},
-		{
-			name: "connection failure", status: http.StatusBadGateway,
-			err: errors.New("connection refused"),
-		},
+		{"no headers", http.Header{}, openAIProtocolModels},
+		{"bearer", http.Header{"Authorization": {"Bearer client-key"}}, openAIProtocolModels},
+		{"version", http.Header{"Anthropic-Version": {"2023-06-01"}}, anthropicProtocolModels},
+		{"api key", http.Header{"X-Api-Key": {"client-key"}}, anthropicProtocolModels},
+		{"both with bearer", http.Header{"Anthropic-Version": {"2023-06-01"}, "X-Api-Key": {"client-key"}, "Authorization": {"Bearer client-key"}}, anthropicProtocolModels},
+		{"empty api key", http.Header{"X-Api-Key": {""}}, anthropicProtocolModels},
+		{"empty version", http.Header{"Anthropic-Version": {""}}, anthropicProtocolModels},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name        string
+				status      int
+				body        string
+				contentType string
+				err         error
+			}{
+				{
+					name: "success", status: http.StatusOK, contentType: "application/json",
+					body: "{\n  \"object\": \"list\", \"data\": [{\"id\":\"model-1\",\"object\":\"model\"}]\n}\n",
+				},
+				{
+					name: "not found", status: http.StatusNotFound, contentType: "application/json",
+					body: `{"error":{"message":"models unavailable","type":"not_found"}}`,
+				},
+				{
+					name: "unauthorized", status: http.StatusUnauthorized, contentType: "application/json",
+					body: `{"error":{"message":"invalid API key","type":"authentication_error"}}`,
+				},
+				{
+					name: "non-JSON error", status: http.StatusServiceUnavailable, contentType: "text/plain",
+					body: "upstream unavailable\n",
+				},
+				{
+					name: "connection failure", status: http.StatusBadGateway,
+					err: errors.New("connection refused"),
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					storage, err := service.NewSQLiteStorageService(&config.StorageConfig{
+						DBPath: t.TempDir() + "/requests.db",
+					})
+					if err != nil {
+						t.Fatalf("create storage: %v", err)
+					}
+					t.Cleanup(func() { _ = storage.Close() })
+					forwarder := &stubModelsForwarder{err: tc.err}
+					if tc.err == nil {
+						forwarder.resp = &http.Response{
+							StatusCode: tc.status,
+							Header: http.Header{
+								"Content-Type": []string{tc.contentType},
+								"X-Request-Id": []string{"upstream-1"},
+							},
+							Body: io.NopCloser(strings.NewReader(tc.body)),
+						}
+					}
+					unused := &stubModelsForwarder{err: errors.New("wrong provider selected")}
+					openAI, anthropic := unused, forwarder
+					if route.protocol == openAIProtocolModels {
+						openAI, anthropic = forwarder, unused
+					}
+					h := New(storage, log.New(io.Discard, "", 0), nil, openAI, anthropic, Options{MaxCaptureBytes: 1024 * 1024, OpenAIConfigured: true, AnthropicConfigured: true})
+					request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+					request.Header = route.headers.Clone()
+					request.Header.Set("User-Agent", "models-test")
+					recorder := httptest.NewRecorder()
+					h.Models(recorder, request)
+					if forwarder.calls != 1 || unused.calls != 0 {
+						t.Fatalf("unexpected provider calls: selected=%d unused=%d", forwarder.calls, unused.calls)
+					}
+					if recorder.Code != tc.status {
+						t.Fatalf("status = %d, want %d", recorder.Code, tc.status)
+					}
+					if tc.err == nil {
+						if recorder.Body.String() != tc.body {
+							t.Fatalf("client response changed: %q", recorder.Body.String())
+						}
+						if recorder.Header().Get("Content-Type") != tc.contentType || recorder.Header().Get("X-Request-Id") != "upstream-1" {
+							t.Fatal("upstream response headers were not preserved")
+						}
+					}
+					requests, err := storage.GetAllRequests("all", "", "")
+					if err != nil {
+						t.Fatalf("read captured requests: %v", err)
+					}
+					if len(requests) != 1 {
+						t.Fatalf("captured %d requests, want 1", len(requests))
+					}
+					stored := requests[0]
+					// Protocol is derived for display rather than persisted in SQLite.
+					h.enrichOpenAIRequestForDisplay(stored)
+					if stored.Method != http.MethodGet || stored.Endpoint != "/v1/models" || stored.Protocol != route.protocol {
+						t.Fatalf("unexpected request metadata: %+v", stored)
+					}
+					if stored.Body != nil || stored.Model != "" || stored.OriginalModel != "" || stored.RoutedModel != "" {
+						t.Fatalf("unexpected request body/model: %+v", stored)
+					}
+					if stored.UserAgent != "models-test" {
+						t.Fatal("request headers were not captured and redacted")
+					}
+					for _, name := range []string{"Authorization", "X-Api-Key"} {
+						if _, present := request.Header[name]; present && http.Header(stored.Headers).Get(name) != "[REDACTED]" {
+							t.Fatalf("%s was not redacted", name)
+						}
+					}
+					if stored.RequestID == "" || stored.Timestamp == "" {
+						t.Fatal("missing request ID or timestamp")
+					}
+					response := stored.Response
+					if response == nil || response.StatusCode != tc.status || response.IsStreaming || response.CompletedAt == "" {
+						t.Fatalf("unexpected stored response: %+v", response)
+					}
+					if tc.err != nil {
+						for _, body := range [][]byte{recorder.Body.Bytes(), response.Body} {
+							var payload struct {
+								Error struct {
+									Message string `json:"message"`
+									Type    string `json:"type"`
+									Code    string `json:"code"`
+								} `json:"error"`
+							}
+							if err := json.Unmarshal(body, &payload); err != nil {
+								t.Fatalf("decode connection error: %v", err)
+							}
+							if payload.Error.Message != "Failed to connect to upstream" || payload.Error.Type != "proxy_error" || payload.Error.Code != "upstream_connection_failed" {
+								t.Fatalf("unexpected connection error: %s", body)
+							}
+						}
+					} else if json.Valid([]byte(tc.body)) {
+						// SQLite serializes RawMessage, so compare JSON without whitespace.
+						var got, want interface{}
+						if err := json.Unmarshal(response.Body, &got); err != nil {
+							t.Fatalf("decode stored JSON: %v", err)
+						}
+						if err := json.Unmarshal([]byte(tc.body), &want); err != nil {
+							t.Fatal(err)
+						}
+						gotJSON, _ := json.Marshal(got)
+						wantJSON, _ := json.Marshal(want)
+						if string(gotJSON) != string(wantJSON) {
+							t.Fatalf("stored body changed: %s", response.Body)
+						}
+					} else if response.BodyText != tc.body {
+						t.Fatalf("stored text changed: %q", response.BodyText)
+					}
+					if tc.status == http.StatusOK {
+						var models model.ModelsResponse
+						if err := json.Unmarshal(recorder.Body.Bytes(), &models); err != nil {
+							t.Fatalf("decode models: %v", err)
+						}
+						if models.Object != "list" || len(models.Data) != 1 || models.Data[0].ID != "model-1" {
+							t.Fatalf("unexpected models: %+v", models)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+type modelsCaptureStorage struct {
+	service.StorageService
+	protocol string
+}
+
+func (s *modelsCaptureStorage) SaveRequest(request *model.RequestLog) (string, error) {
+	s.protocol = request.Protocol
+	return s.StorageService.SaveRequest(request)
+}
+
+func TestModelsConfigurationFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		anthropicHeader     bool
+		openAIConfigured    bool
+		anthropicConfigured bool
+		want                string
+		fallback            bool
+	}{
+		{"openai falls back", false, false, true, anthropicProtocolModels, true},
+		{"anthropic falls back", true, true, false, openAIProtocolModels, true},
+		{"both configured openai", false, true, true, openAIProtocolModels, false},
+		{"both configured anthropic", true, true, true, anthropicProtocolModels, false},
+		{"neither configured openai", false, false, false, openAIProtocolModels, false},
+		{"neither configured anthropic", true, false, false, anthropicProtocolModels, false},
+		{"only openai preferred", false, true, false, openAIProtocolModels, false},
+		{"only anthropic preferred", true, false, true, anthropicProtocolModels, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			storage, err := service.NewSQLiteStorageService(&config.StorageConfig{
-				DBPath: t.TempDir() + "/requests.db",
-			})
+			db, err := service.NewSQLiteStorageService(&config.StorageConfig{DBPath: t.TempDir() + "/requests.db"})
 			if err != nil {
 				t.Fatalf("create storage: %v", err)
 			}
-			t.Cleanup(func() { _ = storage.Close() })
-			forwarder := &stubModelsForwarder{err: tc.err}
-			if tc.err == nil {
-				forwarder.resp = &http.Response{
-					StatusCode: tc.status,
-					Header: http.Header{
-						"Content-Type": []string{tc.contentType},
-						"X-Request-Id": []string{"upstream-1"},
-					},
-					Body: io.NopCloser(strings.NewReader(tc.body)),
-				}
+			t.Cleanup(func() { _ = db.Close() })
+			storage := &modelsCaptureStorage{StorageService: db}
+			const body = `{"data":[{"id":"model-1"}]}`
+			selected := &stubModelsForwarder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": {"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}}
+			unused := &stubModelsForwarder{err: errors.New("unexpected provider")}
+			openAI, anthropic := selected, unused
+			if tc.want == anthropicProtocolModels {
+				openAI, anthropic = unused, selected
 			}
-			h := &Handler{
-				storageService: storage,
-				openAIProvider: forwarder,
-				logger:         log.New(io.Discard, "", 0),
-				options:        Options{MaxCaptureBytes: 1024 * 1024},
-			}
+			var logs strings.Builder
+			h := New(storage, log.New(&logs, "", 0), nil, openAI, anthropic, Options{
+				OpenAIConfigured: tc.openAIConfigured, AnthropicConfigured: tc.anthropicConfigured,
+			})
 			request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
-			request.Header.Set("User-Agent", "models-test")
 			request.Header.Set("Authorization", "Bearer client-key")
+			if tc.anthropicHeader {
+				request.Header.Set("X-Api-Key", "client-key")
+			}
 			recorder := httptest.NewRecorder()
 			h.Models(recorder, request)
-			if recorder.Code != tc.status {
-				t.Fatalf("status = %d, want %d", recorder.Code, tc.status)
+			if selected.calls != 1 || unused.calls != 0 || recorder.Code != http.StatusOK || recorder.Body.String() != body {
+				t.Fatalf("unexpected forwarding: selected=%d unused=%d status=%d body=%s", selected.calls, unused.calls, recorder.Code, recorder.Body.String())
 			}
-			if tc.err == nil {
-				if recorder.Body.String() != tc.body {
-					t.Fatalf("client response changed: %q", recorder.Body.String())
-				}
-				if recorder.Header().Get("Content-Type") != tc.contentType || recorder.Header().Get("X-Request-Id") != "upstream-1" {
-					t.Fatal("upstream response headers were not preserved")
-				}
+			if storage.protocol != tc.want {
+				t.Fatalf("captured protocol = %q, want %q", storage.protocol, tc.want)
 			}
-			requests, err := storage.GetAllRequests("all", "", "")
-			if err != nil {
-				t.Fatalf("read captured requests: %v", err)
+			if strings.Contains(logs.String(), "Models provider fallback:") != tc.fallback {
+				t.Fatalf("unexpected fallback log: %s", logs.String())
 			}
-			if len(requests) != 1 {
-				t.Fatalf("captured %d requests, want 1", len(requests))
+			requests, err := db.GetAllRequests("all", "", "")
+			if err != nil || len(requests) != 1 {
+				t.Fatalf("read captured request: count=%d err=%v", len(requests), err)
 			}
 			stored := requests[0]
-			// Protocol is derived for display rather than persisted in SQLite.
-			enrichOpenAIRequestForDisplay(stored)
-			if stored.Method != http.MethodGet || stored.Endpoint != "/v1/models" || stored.Protocol != openAIProtocolModels {
-				t.Fatalf("unexpected request metadata: %+v", stored)
+			h.enrichOpenAIRequestForDisplay(stored)
+			if stored.Protocol != storage.protocol || stored.Response == nil || string(stored.Response.Body) != body {
+				t.Fatalf("capture/display mismatch: %+v", stored)
 			}
-			if stored.Body != nil || stored.Model != "" || stored.OriginalModel != "" || stored.RoutedModel != "" {
-				t.Fatalf("unexpected request body/model: %+v", stored)
+			// Check the actual history endpoint also uses this handler's options.
+			history := httptest.NewRecorder()
+			h.GetRequests(history, httptest.NewRequest(http.MethodGet, "/api/requests", nil))
+			var page struct {
+				Requests []model.RequestLog `json:"requests"`
 			}
-			if stored.UserAgent != "models-test" || http.Header(stored.Headers).Get("Authorization") != "[REDACTED]" {
-				t.Fatal("request headers were not captured and redacted")
+			if err := json.Unmarshal(history.Body.Bytes(), &page); err != nil {
+				t.Fatalf("decode history: %v", err)
 			}
-			if stored.RequestID == "" || stored.Timestamp == "" {
-				t.Fatal("missing request ID or timestamp")
-			}
-			response := stored.Response
-			if response == nil || response.StatusCode != tc.status || response.IsStreaming || response.CompletedAt == "" {
-				t.Fatalf("unexpected stored response: %+v", response)
-			}
-			if tc.err != nil {
-				for _, body := range [][]byte{recorder.Body.Bytes(), response.Body} {
-					var payload struct {
-						Error struct {
-							Message string `json:"message"`
-							Type    string `json:"type"`
-							Code    string `json:"code"`
-						} `json:"error"`
-					}
-					if err := json.Unmarshal(body, &payload); err != nil {
-						t.Fatalf("decode connection error: %v", err)
-					}
-					if payload.Error.Message != "Failed to connect to upstream" || payload.Error.Type != "proxy_error" || payload.Error.Code != "upstream_connection_failed" {
-						t.Fatalf("unexpected connection error: %s", body)
-					}
-				}
-			} else if json.Valid([]byte(tc.body)) {
-				// SQLite serializes RawMessage, so compare JSON without whitespace.
-				var got, want interface{}
-				if err := json.Unmarshal(response.Body, &got); err != nil {
-					t.Fatalf("decode stored JSON: %v", err)
-				}
-				if err := json.Unmarshal([]byte(tc.body), &want); err != nil {
-					t.Fatal(err)
-				}
-				gotJSON, _ := json.Marshal(got)
-				wantJSON, _ := json.Marshal(want)
-				if string(gotJSON) != string(wantJSON) {
-					t.Fatalf("stored body changed: %s", response.Body)
-				}
-			} else if response.BodyText != tc.body {
-				t.Fatalf("stored text changed: %q", response.BodyText)
-			}
-			if tc.status == http.StatusOK {
-				var models model.ModelsResponse
-				if err := json.Unmarshal(recorder.Body.Bytes(), &models); err != nil {
-					t.Fatalf("decode models: %v", err)
-				}
-				if models.Object != "list" || len(models.Data) != 1 || models.Data[0].ID != "model-1" {
-					t.Fatalf("unexpected models: %+v", models)
-				}
+			if len(page.Requests) != 1 || page.Requests[0].Protocol != tc.want {
+				t.Fatalf("unexpected history protocol: %s", history.Body.String())
 			}
 		})
 	}

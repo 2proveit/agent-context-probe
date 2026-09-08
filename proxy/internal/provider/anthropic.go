@@ -19,7 +19,7 @@ type AnthropicProvider struct {
 	config *config.AnthropicProviderConfig
 }
 
-func NewAnthropicProvider(cfg *config.AnthropicProviderConfig) Provider {
+func NewAnthropicProvider(cfg *config.AnthropicProviderConfig) *AnthropicProvider {
 	return &AnthropicProvider{
 		client: &http.Client{
 			Timeout: 300 * time.Second, // 5 minutes timeout
@@ -30,6 +30,10 @@ func NewAnthropicProvider(cfg *config.AnthropicProviderConfig) Provider {
 
 func (p *AnthropicProvider) Name() string {
 	return "anthropic"
+}
+
+func (p *AnthropicProvider) ForwardModels(ctx context.Context, originalReq *http.Request) (*http.Response, error) {
+	return p.ForwardRequest(ctx, originalReq)
 }
 
 func (p *AnthropicProvider) ForwardRequest(ctx context.Context, originalReq *http.Request) (*http.Response, error) {

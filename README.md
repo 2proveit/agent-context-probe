@@ -143,7 +143,16 @@ Available endpoints:
 - `POST /v1/messages`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
-- `GET /v1/models`: forwards to `providers.openai.base_url` + `/models`, preserves the upstream status and body, and captures the request/response for the dashboard. Upstream connection failures return 502.
+- `GET /v1/models`: requests with an `anthropic-version` or `x-api-key` header
+  forward to `providers.anthropic.base_url` + `/v1/models`, preserving `x-api-key`
+  and filling in a missing `anthropic-version` from configuration. Other requests
+  (including Bearer-only requests) forward to `providers.openai.base_url` + `/models`.
+  If the selected provider has no custom base URL and the other provider does,
+  the request falls back to the other provider. Empty base URLs and the built-in
+  defaults (ignoring surrounding whitespace and trailing slashes) count as
+  unconfigured; when both or neither are configured, header routing is retained.
+  Both branches preserve the upstream status and body and capture the request/response
+  for the dashboard. Upstream connection failures return 502.
 - `GET /health`
 - `GET /api/requests`
 - `DELETE /api/requests`

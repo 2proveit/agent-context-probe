@@ -26,7 +26,15 @@ type openAIForwarder interface {
 	ForwardModels(context.Context, *http.Request) (*http.Response, error)
 }
 
+type modelsForwarder interface {
+	ForwardModels(context.Context, *http.Request) (*http.Response, error)
+}
+
+const anthropicProtocolModels = "anthropic_models"
+
 type Options struct {
+	OpenAIConfigured           bool
+	AnthropicConfigured        bool
 	MaxCaptureBytes            int64
 	ShowRawStreamEvents        bool
 	RawRequestMaxDisplayChars  int
@@ -34,11 +42,12 @@ type Options struct {
 }
 
 type Handler struct {
-	storageService service.StorageService
-	modelRouter    *service.ModelRouter
-	openAIProvider openAIForwarder
-	logger         *log.Logger
-	options        Options
+	storageService    service.StorageService
+	modelRouter       *service.ModelRouter
+	openAIProvider    openAIForwarder
+	anthropicProvider modelsForwarder
+	logger            *log.Logger
+	options           Options
 }
 
 func New(
@@ -46,14 +55,16 @@ func New(
 	logger *log.Logger,
 	modelRouter *service.ModelRouter,
 	openAIProvider openAIForwarder,
+	anthropicProvider modelsForwarder,
 	options Options,
 ) *Handler {
 	return &Handler{
-		storageService: storageService,
-		modelRouter:    modelRouter,
-		openAIProvider: openAIProvider,
-		logger:         logger,
-		options:        options,
+		storageService:    storageService,
+		modelRouter:       modelRouter,
+		openAIProvider:    openAIProvider,
+		anthropicProvider: anthropicProvider,
+		logger:            logger,
+		options:           options,
 	}
 }
 
@@ -324,26 +335,58 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	h.handleNonStreamingResponse(w, resp, requestLog, startTime)
 }
 
+// modelsProtocol uses header presence so routing remains consistent after capture
+// redacts credential values, including empty API keys.
+func modelsProtocol(headers http.Header) string {
+	for name := range headers {
+		if strings.EqualFold(name, "anthropic-version") || strings.EqualFold(name, "x-api-key") {
+			return anthropicProtocolModels
+		}
+	}
+	return openAIProtocolModels
+}
+
+// selectModelsProtocol is shared by forwarding and display enrichment so both
+// apply the same configuration fallback to the captured request headers.
+func (h *Handler) selectModelsProtocol(headers http.Header) string {
+	protocol := modelsProtocol(headers)
+	if protocol == openAIProtocolModels && !h.options.OpenAIConfigured && h.options.AnthropicConfigured {
+		return anthropicProtocolModels
+	}
+	if protocol == anthropicProtocolModels && !h.options.AnthropicConfigured && h.options.OpenAIConfigured {
+		return openAIProtocolModels
+	}
+	return protocol
+}
+
 func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
+	protocol := h.selectModelsProtocol(r.Header)
+	if preferred := modelsProtocol(r.Header); protocol != preferred {
+		h.logger.Printf("Models provider fallback: %s is not configured; using %s", preferred, protocol)
+	}
+	var forwarder modelsForwarder = h.openAIProvider
+	if protocol == anthropicProtocolModels {
+		forwarder = h.anthropicProvider
+	}
 	requestLog := &model.RequestLog{
 		RequestID:   generateRequestID(),
 		Timestamp:   time.Now().Format(time.RFC3339Nano),
 		Method:      r.Method,
 		Endpoint:    r.URL.Path,
-		Protocol:    openAIProtocolModels,
+		Protocol:    protocol,
 		Headers:     CaptureHeaders(r.Header),
 		Body:        nil,
 		UserAgent:   r.Header.Get("User-Agent"),
 		ContentType: r.Header.Get("Content-Type"),
 	}
 	if _, err := h.storageService.SaveRequest(requestLog); err != nil {
-		h.logger.Printf("❌ Error saving OpenAI request: %v", err)
+		h.logger.Printf("❌ Error saving models request: %v", err)
 	}
 
 	startTime := time.Now()
-	resp, err := h.openAIProvider.ForwardModels(r.Context(), r)
+	resp, err := forwarder.ForwardModels(r.Context(), r)
 	if err != nil {
-		h.logger.Printf("❌ Error forwarding %s request: %v", openAIProtocolModels, err)
+		h.logger.Printf("❌ Error forwarding %s request: %v", protocol, err)
 		errorBody, _ := json.Marshal(openAIErrorPayload(
 			"Failed to connect to upstream",
 			"proxy_error",
@@ -357,14 +400,14 @@ func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
 			CompletedAt:  time.Now().Format(time.RFC3339Nano),
 		}
 		if updateErr := h.storageService.UpdateRequestWithResponse(requestLog); updateErr != nil {
-			h.logger.Printf("❌ Error updating failed OpenAI request: %v", updateErr)
+			h.logger.Printf("❌ Error updating failed models request: %v", updateErr)
 		}
 		writeOpenAIError(w, "Failed to connect to upstream", "proxy_error", "upstream_connection_failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	h.copyOpenAIResponse(w, resp, requestLog, startTime, false, openAIProtocolModels)
+	h.copyOpenAIResponse(w, resp, requestLog, startTime, false, protocol)
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +457,7 @@ func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 	for i, req := range allRequests {
 		if req != nil {
 			requests[i] = *req
-			enrichOpenAIRequestForDisplay(&requests[i])
+			h.enrichOpenAIRequestForDisplay(&requests[i])
 		}
 	}
 
@@ -443,14 +486,14 @@ func (h *Handler) GetRequests(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func enrichOpenAIRequestForDisplay(request *model.RequestLog) {
+func (h *Handler) enrichOpenAIRequestForDisplay(request *model.RequestLog) {
 	switch {
 	case strings.Contains(request.Endpoint, "/chat/completions"):
 		request.Protocol = openAIProtocolChat
 	case strings.Contains(request.Endpoint, "/responses"):
 		request.Protocol = openAIProtocolResponses
 	case request.Endpoint == "/v1/models":
-		request.Protocol = openAIProtocolModels
+		request.Protocol = h.selectModelsProtocol(request.Headers)
 		return
 	default:
 		return

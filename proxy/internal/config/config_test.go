@@ -319,3 +319,61 @@ func TestMissingStandardAndExplicitDataPathsFailsClearly(t *testing.T) {
 		t.Fatal("missing standard and explicit data paths must fail")
 	}
 }
+
+func TestProviderIsConfigured(t *testing.T) {
+	for _, provider := range []struct {
+		name       string
+		defaultURL string
+		configured func(string) bool
+	}{
+		{"openai", DefaultOpenAIBaseURL, func(baseURL string) bool {
+			return (OpenAIProviderConfig{BaseURL: baseURL}).IsConfigured()
+		}},
+		{"anthropic", DefaultAnthropicBaseURL, func(baseURL string) bool {
+			return (AnthropicProviderConfig{BaseURL: baseURL}).IsConfigured()
+		}},
+	} {
+		t.Run(provider.name, func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				url  string
+				want bool
+			}{
+				{"empty", "", false},
+				{"whitespace", " \t\n", false},
+				{"default", provider.defaultURL, false},
+				{"default trailing slash", provider.defaultURL + "/", false},
+				{"default whitespace and slashes", " " + provider.defaultURL + "///\t", false},
+				{"custom", "https://gateway.example/api", true},
+				{"custom trailing slash", "https://gateway.example/api/", true},
+				{"localhost", "http://127.0.0.1:8080", true},
+				{"custom path on default host", provider.defaultURL + "/gateway", true},
+				// Configuration detection deliberately does not validate URLs.
+				{"relative path", "gateway/api", true},
+				{"absolute path", "/gateway/api/", true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					if got := provider.configured(tc.url); got != tc.want {
+						t.Fatalf("IsConfigured(%q) = %v, want %v", tc.url, got, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResolveDefaultProvidersAreUnconfigured(t *testing.T) {
+	clearConfigEnvironment(t)
+	standard := isolatedStandardPaths(t)
+	resolution, err := Resolve(LoadOptions{StandardPaths: &standard})
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	providers := resolution.Config.Providers
+	if providers.OpenAI.BaseURL != DefaultOpenAIBaseURL || providers.Anthropic.BaseURL != DefaultAnthropicBaseURL {
+		t.Fatalf("unexpected provider defaults: %+v", providers)
+	}
+	if providers.OpenAI.IsConfigured() || providers.Anthropic.IsConfigured() {
+		t.Fatal("default providers must be unconfigured")
+	}
+}

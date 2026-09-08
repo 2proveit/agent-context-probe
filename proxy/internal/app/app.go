@@ -56,8 +56,9 @@ func New(cfg *config.Config, logger *log.Logger, options Options) (*App, error) 
 		logger.Printf("SQLite schema upgraded from v%d to v%d; backup: %s", migration.PreviousVersion, migration.CurrentVersion, migration.BackupPath)
 	}
 
+	anthropicProvider := provider.NewAnthropicProvider(&cfg.Providers.Anthropic)
 	providers := map[string]provider.Provider{
-		"anthropic": provider.NewAnthropicProvider(&cfg.Providers.Anthropic),
+		"anthropic": anthropicProvider,
 	}
 	openAIProvider := provider.NewOpenAIProvider(&cfg.Providers.OpenAI)
 	providers["openai"] = openAIProvider
@@ -67,7 +68,10 @@ func New(cfg *config.Config, logger *log.Logger, options Options) (*App, error) 
 		logger,
 		modelRouter,
 		openAIProvider,
+		anthropicProvider,
 		handler.Options{
+			OpenAIConfigured:           cfg.Providers.OpenAI.IsConfigured(),
+			AnthropicConfigured:        cfg.Providers.Anthropic.IsConfigured(),
 			MaxCaptureBytes:            cfg.Storage.MaxCaptureBytes,
 			ShowRawStreamEvents:        cfg.Web.ShowRawStreamEvents,
 			RawRequestMaxDisplayChars:  cfg.Web.RawRequestMaxDisplayChars,

@@ -101,7 +101,7 @@ func (h *Handler) GetSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		copy := *request
-		enrichOpenAIRequestForDisplay(&copy)
+		h.enrichOpenAIRequestForDisplay(&copy)
 		requests = append(requests, copy)
 	}
 

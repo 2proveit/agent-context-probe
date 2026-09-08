@@ -12,6 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
+	DefaultAnthropicBaseURL = "https://api.anthropic.com"
+)
+
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Providers ProvidersConfig `yaml:"providers"`
@@ -52,6 +57,23 @@ type AnthropicProviderConfig struct {
 type OpenAIProviderConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
+}
+
+// IsConfigured reports whether a custom base URL is set, not whether it is valid
+// or reachable. The default URL also counts as unconfigured when set explicitly.
+func (c AnthropicProviderConfig) IsConfigured() bool {
+	return isCustomBaseURL(c.BaseURL, DefaultAnthropicBaseURL)
+}
+
+// IsConfigured reports whether a custom base URL is set, not whether it is valid
+// or reachable. The default URL also counts as unconfigured when set explicitly.
+func (c OpenAIProviderConfig) IsConfigured() bool {
+	return isCustomBaseURL(c.BaseURL, DefaultOpenAIBaseURL)
+}
+
+func isCustomBaseURL(baseURL, defaultURL string) bool {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return baseURL != "" && baseURL != defaultURL
 }
 
 type AnthropicConfig struct {
@@ -128,12 +150,12 @@ func Resolve(options LoadOptions) (*Resolution, error) {
 		},
 		Providers: ProvidersConfig{
 			Anthropic: AnthropicProviderConfig{
-				BaseURL:    "https://api.anthropic.com",
+				BaseURL:    DefaultAnthropicBaseURL,
 				Version:    "2023-06-01",
 				MaxRetries: 3,
 			},
 			OpenAI: OpenAIProviderConfig{
-				BaseURL: "https://api.openai.com/v1",
+				BaseURL: DefaultOpenAIBaseURL,
 				APIKey:  "",
 			},
 		},
