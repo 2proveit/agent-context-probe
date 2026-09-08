@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -275,4 +277,163 @@ func savedOpenAIRequest(t *testing.T, storage service.StorageService) *model.Req
 		t.Fatalf("save request: %v", err)
 	}
 	return request
+}
+
+type stubModelsForwarder struct {
+	resp *http.Response
+	err  error
+}
+
+func (s *stubModelsForwarder) ForwardModels(context.Context, *http.Request) (*http.Response, error) {
+	return s.resp, s.err
+}
+
+func (s *stubModelsForwarder) ForwardChatCompletions(context.Context, *http.Request) (*http.Response, error) {
+	panic("unexpected chat completions request")
+}
+
+func (s *stubModelsForwarder) ForwardResponses(context.Context, *http.Request) (*http.Response, error) {
+	panic("unexpected responses request")
+}
+
+func TestModelsForwardsAndCaptures(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		contentType string
+		err         error
+	}{
+		{
+			name: "success", status: http.StatusOK, contentType: "application/json",
+			body: "{\n  \"object\": \"list\", \"data\": [{\"id\":\"model-1\",\"object\":\"model\"}]\n}\n",
+		},
+		{
+			name: "not found", status: http.StatusNotFound, contentType: "application/json",
+			body: `{"error":{"message":"models unavailable","type":"not_found"}}`,
+		},
+		{
+			name: "unauthorized", status: http.StatusUnauthorized, contentType: "application/json",
+			body: `{"error":{"message":"invalid API key","type":"authentication_error"}}`,
+		},
+		{
+			name: "non-JSON error", status: http.StatusServiceUnavailable, contentType: "text/plain",
+			body: "upstream unavailable\n",
+		},
+		{
+			name: "connection failure", status: http.StatusBadGateway,
+			err: errors.New("connection refused"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storage, err := service.NewSQLiteStorageService(&config.StorageConfig{
+				DBPath: t.TempDir() + "/requests.db",
+			})
+			if err != nil {
+				t.Fatalf("create storage: %v", err)
+			}
+			t.Cleanup(func() { _ = storage.Close() })
+			forwarder := &stubModelsForwarder{err: tc.err}
+			if tc.err == nil {
+				forwarder.resp = &http.Response{
+					StatusCode: tc.status,
+					Header: http.Header{
+						"Content-Type": []string{tc.contentType},
+						"X-Request-Id": []string{"upstream-1"},
+					},
+					Body: io.NopCloser(strings.NewReader(tc.body)),
+				}
+			}
+			h := &Handler{
+				storageService: storage,
+				openAIProvider: forwarder,
+				logger:         log.New(io.Discard, "", 0),
+				options:        Options{MaxCaptureBytes: 1024 * 1024},
+			}
+			request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+			request.Header.Set("User-Agent", "models-test")
+			request.Header.Set("Authorization", "Bearer client-key")
+			recorder := httptest.NewRecorder()
+			h.Models(recorder, request)
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.status)
+			}
+			if tc.err == nil {
+				if recorder.Body.String() != tc.body {
+					t.Fatalf("client response changed: %q", recorder.Body.String())
+				}
+				if recorder.Header().Get("Content-Type") != tc.contentType || recorder.Header().Get("X-Request-Id") != "upstream-1" {
+					t.Fatal("upstream response headers were not preserved")
+				}
+			}
+			requests, err := storage.GetAllRequests("all", "", "")
+			if err != nil {
+				t.Fatalf("read captured requests: %v", err)
+			}
+			if len(requests) != 1 {
+				t.Fatalf("captured %d requests, want 1", len(requests))
+			}
+			stored := requests[0]
+			// Protocol is derived for display rather than persisted in SQLite.
+			enrichOpenAIRequestForDisplay(stored)
+			if stored.Method != http.MethodGet || stored.Endpoint != "/v1/models" || stored.Protocol != openAIProtocolModels {
+				t.Fatalf("unexpected request metadata: %+v", stored)
+			}
+			if stored.Body != nil || stored.Model != "" || stored.OriginalModel != "" || stored.RoutedModel != "" {
+				t.Fatalf("unexpected request body/model: %+v", stored)
+			}
+			if stored.UserAgent != "models-test" || http.Header(stored.Headers).Get("Authorization") != "[REDACTED]" {
+				t.Fatal("request headers were not captured and redacted")
+			}
+			if stored.RequestID == "" || stored.Timestamp == "" {
+				t.Fatal("missing request ID or timestamp")
+			}
+			response := stored.Response
+			if response == nil || response.StatusCode != tc.status || response.IsStreaming || response.CompletedAt == "" {
+				t.Fatalf("unexpected stored response: %+v", response)
+			}
+			if tc.err != nil {
+				for _, body := range [][]byte{recorder.Body.Bytes(), response.Body} {
+					var payload struct {
+						Error struct {
+							Message string `json:"message"`
+							Type    string `json:"type"`
+							Code    string `json:"code"`
+						} `json:"error"`
+					}
+					if err := json.Unmarshal(body, &payload); err != nil {
+						t.Fatalf("decode connection error: %v", err)
+					}
+					if payload.Error.Message != "Failed to connect to upstream" || payload.Error.Type != "proxy_error" || payload.Error.Code != "upstream_connection_failed" {
+						t.Fatalf("unexpected connection error: %s", body)
+					}
+				}
+			} else if json.Valid([]byte(tc.body)) {
+				// SQLite serializes RawMessage, so compare JSON without whitespace.
+				var got, want interface{}
+				if err := json.Unmarshal(response.Body, &got); err != nil {
+					t.Fatalf("decode stored JSON: %v", err)
+				}
+				if err := json.Unmarshal([]byte(tc.body), &want); err != nil {
+					t.Fatal(err)
+				}
+				gotJSON, _ := json.Marshal(got)
+				wantJSON, _ := json.Marshal(want)
+				if string(gotJSON) != string(wantJSON) {
+					t.Fatalf("stored body changed: %s", response.Body)
+				}
+			} else if response.BodyText != tc.body {
+				t.Fatalf("stored text changed: %q", response.BodyText)
+			}
+			if tc.status == http.StatusOK {
+				var models model.ModelsResponse
+				if err := json.Unmarshal(recorder.Body.Bytes(), &models); err != nil {
+					t.Fatalf("decode models: %v", err)
+				}
+				if models.Object != "list" || len(models.Data) != 1 || models.Data[0].ID != "model-1" {
+					t.Fatalf("unexpected models: %+v", models)
+				}
+			}
+		})
+	}
 }

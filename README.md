@@ -143,7 +143,7 @@ Available endpoints:
 - `POST /v1/messages`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
-- `GET /v1/models`
+- `GET /v1/models`: forwards to `providers.openai.base_url` + `/models`, preserves the upstream status and body, and captures the request/response for the dashboard. Upstream connection failures return 502.
 - `GET /health`
 - `GET /api/requests`
 - `DELETE /api/requests`

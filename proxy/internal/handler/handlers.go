@@ -23,6 +23,7 @@ import (
 type openAIForwarder interface {
 	ForwardChatCompletions(context.Context, *http.Request) (*http.Response, error)
 	ForwardResponses(context.Context, *http.Request) (*http.Response, error)
+	ForwardModels(context.Context, *http.Request) (*http.Response, error)
 }
 
 type Options struct {
@@ -324,15 +325,46 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
-	// This proxy uses pattern-based routing and supports any model dynamically.
-	// Returning an empty list since the actual supported models depend on the
-	// upstream providers (Anthropic, OpenAI) and their current offerings.
-	response := &model.ModelsResponse{
-		Object: "list",
-		Data:   []model.ModelInfo{},
+	requestLog := &model.RequestLog{
+		RequestID:   generateRequestID(),
+		Timestamp:   time.Now().Format(time.RFC3339Nano),
+		Method:      r.Method,
+		Endpoint:    r.URL.Path,
+		Protocol:    openAIProtocolModels,
+		Headers:     CaptureHeaders(r.Header),
+		Body:        nil,
+		UserAgent:   r.Header.Get("User-Agent"),
+		ContentType: r.Header.Get("Content-Type"),
+	}
+	if _, err := h.storageService.SaveRequest(requestLog); err != nil {
+		h.logger.Printf("❌ Error saving OpenAI request: %v", err)
 	}
 
-	writeJSONResponse(w, response)
+	startTime := time.Now()
+	resp, err := h.openAIProvider.ForwardModels(r.Context(), r)
+	if err != nil {
+		h.logger.Printf("❌ Error forwarding %s request: %v", openAIProtocolModels, err)
+		errorBody, _ := json.Marshal(openAIErrorPayload(
+			"Failed to connect to upstream",
+			"proxy_error",
+			"upstream_connection_failed",
+		))
+		requestLog.Response = &model.ResponseLog{
+			StatusCode:   http.StatusBadGateway,
+			Body:         errorBody,
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			IsStreaming:  false,
+			CompletedAt:  time.Now().Format(time.RFC3339Nano),
+		}
+		if updateErr := h.storageService.UpdateRequestWithResponse(requestLog); updateErr != nil {
+			h.logger.Printf("❌ Error updating failed OpenAI request: %v", updateErr)
+		}
+		writeOpenAIError(w, "Failed to connect to upstream", "proxy_error", "upstream_connection_failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	h.copyOpenAIResponse(w, resp, requestLog, startTime, false, openAIProtocolModels)
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +449,9 @@ func enrichOpenAIRequestForDisplay(request *model.RequestLog) {
 		request.Protocol = openAIProtocolChat
 	case strings.Contains(request.Endpoint, "/responses"):
 		request.Protocol = openAIProtocolResponses
+	case request.Endpoint == "/v1/models":
+		request.Protocol = openAIProtocolModels
+		return
 	default:
 		return
 	}

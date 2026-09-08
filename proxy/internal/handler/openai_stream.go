@@ -11,6 +11,7 @@ import (
 const (
 	openAIProtocolChat      = "openai_chat_completions"
 	openAIProtocolResponses = "openai_responses"
+	openAIProtocolModels    = "openai_models"
 )
 
 var errOpenAIStreamInterrupted = errors.New("stream ended before a terminal event")

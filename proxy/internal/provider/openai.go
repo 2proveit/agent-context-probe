@@ -39,6 +39,10 @@ func (p *OpenAIProvider) ForwardResponses(ctx context.Context, originalReq *http
 	return p.forwardOpenAIRequest(ctx, originalReq, "responses")
 }
 
+func (p *OpenAIProvider) ForwardModels(ctx context.Context, originalReq *http.Request) (*http.Response, error) {
+	return p.forwardOpenAIRequest(ctx, originalReq, "models")
+}
+
 func (p *OpenAIProvider) forwardOpenAIRequest(
 	ctx context.Context,
 	originalReq *http.Request,
