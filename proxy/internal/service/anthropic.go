@@ -26,7 +26,7 @@ type anthropicService struct {
 func NewAnthropicService(cfg *config.AnthropicConfig) AnthropicService {
 	return &anthropicService{
 		client: &http.Client{
-			Timeout: 300 * time.Second, // Increased timeout to 5 minutes
+			Timeout: 600 * time.Second, // 10 minutes timeout
 		},
 		config: cfg,
 	}

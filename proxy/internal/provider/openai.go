@@ -25,7 +25,7 @@ type OpenAIProvider struct {
 func NewOpenAIProvider(cfg *config.OpenAIProviderConfig) *OpenAIProvider {
 	return &OpenAIProvider{
 		client: &http.Client{
-			Timeout: 300 * time.Second, // 5 minutes timeout
+			Timeout: 600 * time.Second, // 10 minutes timeout
 		},
 		config: cfg,
 	}
