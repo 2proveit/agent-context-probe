@@ -82,6 +82,7 @@ func (h *Handler) handleOpenAIRequest(
 	protocol string,
 	forward func(context.Context, *http.Request) (*http.Response, error),
 ) {
+	startTime := time.Now()
 	bodyBytes := getBodyBytes(r)
 	if bodyBytes == nil {
 		writeOpenAIError(w, "Error reading request body", "invalid_request_error", "request_body_unavailable", http.StatusBadRequest)
@@ -111,7 +112,7 @@ func (h *Handler) handleOpenAIRequest(
 	}
 	requestLog := &model.RequestLog{
 		RequestID:     generateRequestID(),
-		Timestamp:     time.Now().Format(time.RFC3339Nano),
+		Timestamp:     startTime.Format(time.RFC3339Nano),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
 		Protocol:      protocol,
@@ -127,7 +128,6 @@ func (h *Handler) handleOpenAIRequest(
 		h.logger.Printf("❌ Error saving OpenAI request: %v", err)
 	}
 
-	startTime := time.Now()
 	resp, err := forward(r.Context(), r)
 	if err != nil {
 		h.logger.Printf("❌ Error forwarding %s request: %v", protocol, err)
@@ -172,11 +172,17 @@ func (h *Handler) copyOpenAIResponse(
 	var captured bytes.Buffer
 	var responseBytes int64
 	var streamErr string
+	observer := firstTokenObserver{protocol: protocol, start: startTime}
+	observeStream := isStreaming && resp.StatusCode == http.StatusOK && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 	buffer := make([]byte, 32*1024)
 	for {
 		count, readErr := resp.Body.Read(buffer)
+		receivedAt := time.Now()
 		if count > 0 {
 			chunk := buffer[:count]
+			if observeStream {
+				observer.observe(chunk, receivedAt)
+			}
 			responseBytes += int64(count)
 			if h.options.MaxCaptureBytes == 0 {
 				_, _ = captured.Write(chunk)
@@ -217,6 +223,7 @@ func (h *Handler) copyOpenAIResponse(
 		ResponseBytes: responseBytes,
 		StreamError:   streamErr,
 	}
+	observer.record(responseLog)
 
 	capturedBytes := captured.Bytes()
 	isEventStream := isStreaming && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
@@ -284,7 +291,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	// Create request log with routing information
 	requestLog := &model.RequestLog{
 		RequestID:     requestID,
-		Timestamp:     time.Now().Format(time.RFC3339Nano),
+		Timestamp:     startTime.Format(time.RFC3339Nano),
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
 		Headers:       CaptureHeaders(r.Header),
@@ -574,9 +581,11 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 	var modelName string
 	var stopReason string
 	var messageStopped bool
+	var firstTokenAt time.Time
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		receivedAt := time.Now()
 		line := scanner.Text()
 		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
@@ -634,6 +643,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		if err := json.Unmarshal([]byte(jsonData), &event); err != nil {
 			// Skip if structured parsing fails, but we already got the usage data above
 			continue
+		}
+		if firstTokenAt.IsZero() && hasAnthropicGeneratedContent(event) {
+			firstTokenAt = receivedAt
 		}
 
 		switch event.Type {
@@ -711,6 +723,9 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		ResponseTime:    time.Since(startTime).Milliseconds(),
 		IsStreaming:     true,
 		CompletedAt:     time.Now().Format(time.RFC3339Nano),
+	}
+	if !firstTokenAt.IsZero() {
+		firstTokenObserver{start: startTime, at: firstTokenAt}.record(responseLog)
 	}
 
 	if scanErr != nil {

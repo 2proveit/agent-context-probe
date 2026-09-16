@@ -20,6 +20,7 @@ The proxy, management API, health check, and Dashboard share
 
 - Transparent Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses proxying
 - Streaming and non-streaming response capture
+- First generated stream content timestamp and proxy-observed TTFT in request history
 - SQLite request history with model, time, and header filters
 - Session and parent/subagent trace views
 - Normalized messages, reasoning, tool calls, tool results, token usage, and latency
@@ -28,6 +29,14 @@ The proxy, management API, health check, and Dashboard share
 - Local-only listening by default
 - Sensitive request and response headers redacted before SQLite persistence
 - Explicit token authentication for non-loopback listening
+
+For streaming model responses, the stored response includes `firstTokenAt`
+(RFC 3339 timestamp) and `ttftMs` (milliseconds from the proxy handler's request
+start to the first completed SSE data line with generated text, reasoning, or
+tool-call content). Metadata, usage, empty deltas, and terminal events do not
+count. These fields are absent when no generated content is observed, including
+non-streaming responses. The timing reflects arrival at this proxy, not delivery
+to the client.
 
 ## Build from source
 

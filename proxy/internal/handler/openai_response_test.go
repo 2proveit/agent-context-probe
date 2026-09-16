@@ -61,6 +61,28 @@ func TestCopyOpenAIResponseStoresRawAndStructuredStream(t *testing.T) {
 	}
 }
 
+func TestCopyOpenAIResponsePersistsFirstTokenTiming(t *testing.T) {
+	storage, err := service.NewSQLiteStorageService(&config.StorageConfig{DBPath: t.TempDir() + "/requests.db"})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	defer storage.Close()
+	handler := &Handler{storageService: storage, logger: log.New(io.Discard, "", 0)}
+	requestLog := savedOpenAIRequest(t, storage)
+	raw := "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\n" +
+		"data: [DONE]\n\n"
+	upstream := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(raw))}
+	handler.copyOpenAIResponse(httptest.NewRecorder(), upstream, requestLog, time.Now().Add(-time.Second), true, openAIProtocolChat)
+	stored, _, err := storage.GetRequestByShortID(requestLog.RequestID)
+	if err != nil {
+		t.Fatalf("read persisted request: %v", err)
+	}
+	if stored.Response == nil || stored.Response.TTFTMs == nil || *stored.Response.TTFTMs < 900 || stored.Response.FirstTokenAt == "" {
+		t.Fatalf("missing persisted first token timing: %+v", stored.Response)
+	}
+}
+
 func TestCopyOpenAIResponseMarksTruncatedCaptureWithoutPartialResult(t *testing.T) {
 	storage, err := service.NewSQLiteStorageService(&config.StorageConfig{
 		DBPath: t.TempDir() + "/requests.db",
@@ -178,6 +200,9 @@ func TestHandleAnthropicStreamingResponseStoresToolUse(t *testing.T) {
 
 	if requestLog.Response.StreamError != "" {
 		t.Fatalf("unexpected stream error: %s", requestLog.Response.StreamError)
+	}
+	if requestLog.Response.TTFTMs == nil || requestLog.Response.FirstTokenAt == "" {
+		t.Fatal("tool use did not record first token timing")
 	}
 	var body map[string]interface{}
 	if err := json.Unmarshal(requestLog.Response.Body, &body); err != nil {

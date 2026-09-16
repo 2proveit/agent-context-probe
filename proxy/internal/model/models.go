@@ -47,6 +47,8 @@ type ResponseLog struct {
 	Body            json.RawMessage     `json:"body,omitempty"`
 	BodyText        string              `json:"bodyText,omitempty"`
 	ResponseTime    int64               `json:"responseTime"`
+	FirstTokenAt    string              `json:"firstTokenAt,omitempty"`
+	TTFTMs          *int64              `json:"ttftMs,omitempty"`
 	StreamingChunks []string            `json:"streamingChunks,omitempty"`
 	IsStreaming     bool                `json:"isStreaming"`
 	CompletedAt     string              `json:"completedAt"`
