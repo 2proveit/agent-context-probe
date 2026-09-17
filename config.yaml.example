@@ -18,13 +18,13 @@ server:
   # Timeout configurations
   timeouts:
     # Maximum duration for reading the entire request, including the body
-    read: 10m
+    read: 15m
     
     # Maximum duration before timing out writes of the response
-    write: 10m
+    write: 15m
     
     # Maximum amount of time to wait for the next request when keep-alives are enabled
-    idle: 10m
+    idle: 15m
 
 # Provider configurations
 providers:

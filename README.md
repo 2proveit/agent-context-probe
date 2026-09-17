@@ -215,9 +215,9 @@ server:
   host: "127.0.0.1"
   port: 3001
   timeouts:
-    read: 10m
-    write: 10m
-    idle: 10m
+    read: 15m
+    write: 15m
+    idle: 15m
 
 providers:
   anthropic:
@@ -257,7 +257,7 @@ Environment variables:
 | `ACP_PORT`              | Listen port; defaults to `3001`             |
 | `PORT`                  | Backward-compatible port alias              |
 | `ACP_ACCESS_TOKEN`      | Required for non-loopback listening         |
-| `READ_TIMEOUT`          | Go duration such as `30s` or `10m`          |
+| `READ_TIMEOUT`          | Go duration such as `30s` or `15m`          |
 | `WRITE_TIMEOUT`         | Go duration                                 |
 | `IDLE_TIMEOUT`          | Go duration                                 |
 | `ANTHROPIC_FORWARD_URL` | Anthropic upstream base URL                 |

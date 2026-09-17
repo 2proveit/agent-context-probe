@@ -8,7 +8,7 @@ import (
 )
 
 func TestProviderDefaultTimeouts(t *testing.T) {
-	const want = 10 * time.Minute
+	const want = 15 * time.Minute
 
 	openAIProvider := NewOpenAIProvider(&config.OpenAIProviderConfig{})
 	if openAIProvider.client.Timeout != want {

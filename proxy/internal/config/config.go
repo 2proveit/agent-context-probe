@@ -144,9 +144,9 @@ func Resolve(options LoadOptions) (*Resolution, error) {
 		Server: ServerConfig{
 			Host:         "127.0.0.1",
 			Port:         "3001",
-			ReadTimeout:  600 * time.Second,
-			WriteTimeout: 600 * time.Second,
-			IdleTimeout:  600 * time.Second,
+			ReadTimeout:  900 * time.Second,
+			WriteTimeout: 900 * time.Second,
+			IdleTimeout:  900 * time.Second,
 		},
 		Providers: ProvidersConfig{
 			Anthropic: AnthropicProviderConfig{

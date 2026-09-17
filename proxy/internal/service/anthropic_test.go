@@ -8,7 +8,7 @@ import (
 )
 
 func TestAnthropicServiceDefaultTimeout(t *testing.T) {
-	const want = 10 * time.Minute
+	const want = 15 * time.Minute
 
 	service, ok := NewAnthropicService(&config.AnthropicConfig{}).(*anthropicService)
 	if !ok {

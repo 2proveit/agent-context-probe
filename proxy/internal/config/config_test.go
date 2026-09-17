@@ -107,6 +107,10 @@ func TestDefaultConfigurationBindsToLoopback(t *testing.T) {
 	if cfg.Server.Host != "127.0.0.1" || cfg.Server.Port != "3001" {
 		t.Fatalf("unexpected default address: %s:%s", cfg.Server.Host, cfg.Server.Port)
 	}
+	const wantTimeout = 15 * time.Minute
+	if cfg.Server.ReadTimeout != wantTimeout || cfg.Server.WriteTimeout != wantTimeout || cfg.Server.IdleTimeout != wantTimeout {
+		t.Fatalf("unexpected default timeouts: read=%s write=%s idle=%s, want %s", cfg.Server.ReadTimeout, cfg.Server.WriteTimeout, cfg.Server.IdleTimeout, wantTimeout)
+	}
 	if cfg.Storage.DBPath != standard.Database {
 		t.Fatalf("default database path = %s, want %s", cfg.Storage.DBPath, standard.Database)
 	}

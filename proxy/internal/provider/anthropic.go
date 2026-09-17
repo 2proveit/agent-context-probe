@@ -22,7 +22,7 @@ type AnthropicProvider struct {
 func NewAnthropicProvider(cfg *config.AnthropicProviderConfig) *AnthropicProvider {
 	return &AnthropicProvider{
 		client: &http.Client{
-			Timeout: 600 * time.Second, // 10 minutes timeout
+			Timeout: 900 * time.Second, // 15 minutes timeout
 		},
 		config: cfg,
 	}
