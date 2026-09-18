@@ -90,6 +90,30 @@ func TestConfigAcceptsUnlimitedRawDisplay(t *testing.T) {
 	}
 }
 
+func TestLoadModelMappings(t *testing.T) {
+	clearConfigEnvironment(t)
+	standard := isolatedStandardPaths(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("model_mappings:\n  claude-sonnet: deepseek-v4-flash\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadWithOptions(LoadOptions{ConfigPath: configPath, StandardPaths: &standard})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.ModelMappings["claude-sonnet"]; got != "deepseek-v4-flash" {
+		t.Fatalf("model mapping = %q, want deepseek-v4-flash", got)
+	}
+}
+
+func TestConfigRejectsEmptyModelMapping(t *testing.T) {
+	cfg := validConfig()
+	cfg.ModelMappings = map[string]string{"claude-sonnet": ""}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected empty target model to fail validation")
+	}
+}
+
 func TestDefaultConfigurationBindsToLoopback(t *testing.T) {
 	clearConfigEnvironment(t)
 	standard := isolatedStandardPaths(t)

@@ -33,6 +33,7 @@ type modelsForwarder interface {
 const anthropicProtocolModels = "anthropic_models"
 
 type Options struct {
+	ModelMappings              map[string]string
 	OpenAIConfigured           bool
 	AnthropicConfigured        bool
 	MaxCaptureBytes            int64
@@ -96,8 +97,19 @@ func (h *Handler) handleOpenAIRequest(
 	}
 
 	modelName, _ := requestBody["model"].(string)
-	isStreaming, _ := requestBody["stream"].(bool)
+	routedModel := h.mapModel(modelName)
 	storedBody := interface{}(requestBody)
+	if routedModel != modelName {
+		forwardBody, err := replaceRequestModel(bodyBytes, routedModel)
+		if err != nil {
+			writeOpenAIError(w, "Failed to process request", "proxy_error", "request_encoding_failed", http.StatusInternalServerError)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(forwardBody))
+		r.ContentLength = int64(len(forwardBody))
+		r.Header.Set("Content-Length", strconv.Itoa(len(forwardBody)))
+	}
+	isStreaming, _ := requestBody["stream"].(bool)
 	if h.options.MaxCaptureBytes > 0 && int64(len(bodyBytes)) > h.options.MaxCaptureBytes {
 		storedBody = map[string]interface{}{
 			"model":  modelName,
@@ -120,7 +132,7 @@ func (h *Handler) handleOpenAIRequest(
 		Body:          storedBody,
 		Model:         modelName,
 		OriginalModel: modelName,
-		RoutedModel:   modelName,
+		RoutedModel:   routedModel,
 		UserAgent:     r.Header.Get("User-Agent"),
 		ContentType:   r.Header.Get("Content-Type"),
 	}
@@ -149,9 +161,34 @@ func (h *Handler) handleOpenAIRequest(
 		writeOpenAIError(w, "Failed to connect to upstream", "proxy_error", "upstream_connection_failed", http.StatusBadGateway)
 		return
 	}
+	if err := restoreResponseModel(resp, modelName, routedModel, protocol); err != nil {
+		h.logger.Printf("❌ Error restoring OpenAI response model: %v", err)
+		writeOpenAIError(w, "Failed to process upstream response", "proxy_error", "upstream_response_failed", http.StatusBadGateway)
+		return
+	}
 	defer resp.Body.Close()
 
 	h.copyOpenAIResponse(w, resp, requestLog, startTime, isStreaming, protocol)
+}
+
+func (h *Handler) mapModel(modelName string) string {
+	if mapped := h.options.ModelMappings[modelName]; mapped != "" {
+		return mapped
+	}
+	return modelName
+}
+
+func replaceRequestModel(body []byte, targetModel string) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	modelJSON, err := json.Marshal(targetModel)
+	if err != nil {
+		return nil, err
+	}
+	fields["model"] = modelJSON
+	return json.Marshal(fields)
 }
 
 func (h *Handler) copyOpenAIResponse(
@@ -287,6 +324,9 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		writeErrorResponse(w, "Failed to route request", http.StatusInternalServerError)
 		return
 	}
+	// A global model alias changes only the model sent to the selected provider.
+	// Provider selection is based on the incoming protocol and existing routing.
+	decision.TargetModel = h.mapModel(decision.TargetModel)
 
 	// Create request log with routing information
 	requestLog := &model.RequestLog{
@@ -311,8 +351,8 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	if decision.TargetModel != decision.OriginalModel {
 		req.Model = decision.TargetModel
 
-		// Re-marshal the request with the updated model
-		updatedBodyBytes, err := json.Marshal(req)
+		// Preserve protocol fields outside the parsed routing model.
+		updatedBodyBytes, err := replaceRequestModel(bodyBytes, req.Model)
 		if err != nil {
 			log.Printf("❌ Error marshaling updated request: %v", err)
 			writeErrorResponse(w, "Failed to process request", http.StatusInternalServerError)
@@ -330,6 +370,11 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("❌ Error forwarding to %s API: %v", decision.Provider.Name(), err)
 		writeErrorResponse(w, "Failed to forward request", http.StatusInternalServerError)
+		return
+	}
+	if err := restoreResponseModel(resp, decision.OriginalModel, decision.TargetModel, anthropicProtocolMessages); err != nil {
+		log.Printf("❌ Error restoring Anthropic response model: %v", err)
+		writeErrorResponse(w, "Failed to process upstream response", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

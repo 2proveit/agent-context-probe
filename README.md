@@ -285,6 +285,26 @@ writes. When an existing database requires an upgrade, Agent Context Probe:
 Backup files are never deleted automatically. `doctor` reports the current and
 target schema without performing the migration.
 
+## Model mappings
+
+Set `model_mappings` in `config.yaml` to replace exact incoming model names:
+
+```yaml
+model_mappings:
+  claude-sonnet: deepseek-v4-flash
+  gpt-4o: custom-openai-model
+```
+
+Mappings apply to Anthropic Messages, OpenAI Chat Completions, and OpenAI
+Responses requests. The proxy changes only the upstream request's `model`
+value; a model mapping never changes the selected provider. Ordinary Anthropic
+requests use `providers.anthropic.base_url`; OpenAI requests use
+`providers.openai.base_url`. Existing subagent routing may select a different
+provider before the model mapping is applied. Mappings are exact and applied
+once. Successful JSON and streaming responses report the client's original
+model name, while request records retain both `originalModel` and
+`routedModel`.
+
 ## Optional subagent routing
 
 ```yaml

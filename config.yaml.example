@@ -71,6 +71,13 @@ web:
   raw_request_max_display_chars: 0
   raw_response_max_display_chars: 0
 
+# Model aliases (optional). Applies to Anthropic Messages, OpenAI Chat
+# Completions, and OpenAI Responses. Only the model value changes; each
+# request stays on its original protocol's configured upstream URL.
+model_mappings:
+  # claude-sonnet: deepseek-v4-flash
+  # gpt-4o: custom-openai-model
+
 # Subagent Configuration (Optional)
 # Enable this feature if you want to route specific Claude Code agents to different LLM providers
 # For subagent setup instructions, see: https://docs.anthropic.com/en/docs/claude-code/sub-agents

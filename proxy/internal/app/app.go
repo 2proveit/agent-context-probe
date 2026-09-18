@@ -70,6 +70,7 @@ func New(cfg *config.Config, logger *log.Logger, options Options) (*App, error) 
 		openAIProvider,
 		anthropicProvider,
 		handler.Options{
+			ModelMappings:              cfg.ModelMappings,
 			OpenAIConfigured:           cfg.Providers.OpenAI.IsConfigured(),
 			AnthropicConfigured:        cfg.Providers.Anthropic.IsConfigured(),
 			MaxCaptureBytes:            cfg.Storage.MaxCaptureBytes,
