@@ -407,3 +407,95 @@ project and Agent Context Probe are distributed under the MIT License. See
 ## License
 
 MIT License. See [LICENSE](LICENSE).
+
+## Downstream response fault injection
+
+`response_corruption` simulates unstable model responses **received by the
+harness**. Requests still go to the configured provider unchanged. After routing,
+provider conversion, and model-alias restoration, the proxy can replace a selected
+HTTP 200 response with a synthetic bad response in the client's own protocol.
+
+```text
+Harness -- original request --> Proxy --> Model provider
+Harness <-- faulty response -- Proxy <-- provider response
+```
+
+The feature defaults to disabled. Copy the section from `config.yaml.example`
+and restart the proxy. To exercise one failure deterministically:
+
+```yaml
+response_corruption:
+  enabled: true
+  probability: 1
+  seed: 42
+  modes: [empty_stop]
+```
+
+| Mode                     | What the downstream harness receives                                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `empty_stop`             | A complete reasoning-only response with no visible text or tool calls. Chat ends with `stop`, Messages with `end_turn`, and Responses with `completed` containing only reasoning.       |
+| `repetition`             | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                |
+| `pseudo_tags`            | A complete text response containing fake tool-return and system-warning tags.                                                                                                           |
+| `invalid_tool_arguments` | A call to the first declared request tool with deliberately invalid argument JSON. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object.          |
+| `truncate_stream`        | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset. |
+
+The first three modes are based on the observed shapes of repetition,
+pseudo-tag contamination, and reasoning-only empty-stop badcases. They simulate
+those failures without relying on the provider to reproduce them. Mode selection
+happens after the provider has returned HTTP 200. Upstream 4xx/5xx responses and
+connection failures remain unchanged; health, Dashboard, and model-list endpoints
+are excluded.
+
+Omit `modes` to select randomly among all five. `truncate_stream` is excluded for
+non-SSE responses, and `invalid_tool_arguments` is excluded when no tool is
+specified. Probability is applied to the remaining eligible responses; if none of
+the requested modes applies, that response passes through without a fault marker.
+Duplicate mode names weight selection. `probability: 0` also disables injection.
+The synchronized generator repeats the same sequence for the same seed, eligible
+response order, streaming format, and tool availability. Concurrent completion
+order can change which request receives a particular fault.
+
+`truncate_after_bytes` defaults to 256 (also when set to zero). The truncation
+point is the smaller of that limit and half of the first write's bytes, so chunk
+boundaries can affect the actual prefix. Invalid probabilities, unknown modes,
+and negative limits fail startup even when injection is disabled.
+
+The injector is the final response layer so internal protocol conversion cannot
+repair the fault before it reaches the harness. When the first provider bytes are
+available, the selected synthetic response is flushed and further provider work
+is cancelled through a private context. Subsequent handler output is suppressed.
+For non-streaming protocols the existing handler may have already buffered the
+provider response before injection. Synthetic usage is zero, not measured provider
+usage. Credentials, model-provider URLs, and outgoing request bodies are untouched.
+
+The client receives `X-Agent-Context-Probe-Corruption` (mode) and
+`X-Agent-Context-Probe-Corruption-Id` (fault ID). Logs record these identifiers,
+the client protocol, and injected byte count without prompt or credential text.
+The captured response headers retain those markers plus
+`X-Agent-Context-Probe-Corruption-Capture: upstream-before-injection`. SQLite
+continues to store provider-side bytes seen before injection; after cancellation
+that capture may be incomplete and have a stream error. It is **not** a recording
+of the synthetic bytes received by the client. Capture the harness-side raw
+response when assessing recovery.
+
+Local checks exercise three protocols, both JSON and SSE, byte-for-byte unchanged
+upstream requests, downstream fault contents, cancellation, metadata capture,
+seed replay, concurrency, and an illustrative bounded retry after an empty stop:
+
+```bash
+cd proxy
+go test -race ./internal/app ./internal/config ./internal/middleware ./internal/handler -run 'TestResponseCorruption|TestInjectedStream|TestDownstreamConsumer'
+```
+
+These tests establish the proxy's fault-delivery behavior. The retry consumer is
+a small test client, not Lumi or OpenCode acceptance. To assess a real harness,
+point its model endpoint at this proxy, start with one mode and probability 1,
+and inspect the harness's validation, retries, tool dispatch, termination, and
+final delivery. Test mixed healthy/faulty responses afterward with a probability
+below 1. Restore `enabled: false` and restart when the experiment is finished.
+
+The earlier experimental `request_corruption` implementation mutated upstream
+requests and did not test this failure direction. It has been replaced; use the
+`response_corruption` section above. Earlier request-pollution replay artifacts
+are historical evidence of that superseded experiment, not harness-stability
+results.

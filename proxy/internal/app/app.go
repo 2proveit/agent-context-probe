@@ -35,6 +35,9 @@ type App struct {
 }
 
 func New(cfg *config.Config, logger *log.Logger, options Options) (*App, error) {
+	if err := cfg.ResponseCorruption.Validate(); err != nil {
+		return nil, err
+	}
 	assets := options.Assets
 	if assets == nil {
 		embedded, err := webui.Embedded()
@@ -82,6 +85,7 @@ func New(cfg *config.Config, logger *log.Logger, options Options) (*App, error) 
 
 	router := mux.NewRouter()
 	router.Use(middleware.Logging)
+	router.Use(middleware.ResponseCorruption(cfg.ResponseCorruption, logger))
 	router.HandleFunc("/v1/chat/completions", h.ChatCompletions).Methods(http.MethodPost)
 	router.HandleFunc("/v1/responses", h.Responses).Methods(http.MethodPost)
 	router.HandleFunc("/v1/messages", h.Messages).Methods(http.MethodPost)

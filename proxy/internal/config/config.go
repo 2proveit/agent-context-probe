@@ -18,13 +18,14 @@ const (
 )
 
 type Config struct {
-	Server        ServerConfig      `yaml:"server"`
-	Providers     ProvidersConfig   `yaml:"providers"`
-	ModelMappings map[string]string `yaml:"model_mappings"`
-	Storage       StorageConfig     `yaml:"storage"`
-	Web           WebConfig         `yaml:"web"`
-	Subagents     SubagentsConfig   `yaml:"subagents"`
-	Anthropic     AnthropicConfig
+	ResponseCorruption ResponseCorruptionConfig `yaml:"response_corruption"`
+	Server             ServerConfig             `yaml:"server"`
+	Providers          ProvidersConfig          `yaml:"providers"`
+	ModelMappings      map[string]string        `yaml:"model_mappings"`
+	Storage            StorageConfig            `yaml:"storage"`
+	Web                WebConfig                `yaml:"web"`
+	Subagents          SubagentsConfig          `yaml:"subagents"`
+	Anthropic          AnthropicConfig
 }
 
 type ServerConfig struct {
@@ -406,6 +407,9 @@ func (c *Config) applyFileDurations() {
 }
 
 func (c *Config) validate() error {
+	if err := c.ResponseCorruption.Validate(); err != nil {
+		return err
+	}
 	for source, target := range c.ModelMappings {
 		if strings.TrimSpace(source) == "" || strings.TrimSpace(target) == "" {
 			return fmt.Errorf("model_mappings entries require non-empty source and target model names")

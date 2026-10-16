@@ -284,6 +284,7 @@ func (h *Handler) copyOpenAIResponse(
 		responseLog.BodyText = captured.String()
 	}
 
+	recordResponseCorruption(responseLog, w)
 	requestLog.Response = responseLog
 	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
 		h.logger.Printf("❌ Error updating OpenAI request response: %v", err)
@@ -605,6 +606,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 			CompletedAt:  time.Now().Format(time.RFC3339Nano),
 		}
 
+		recordResponseCorruption(responseLog, w)
 		requestLog.Response = responseLog
 		if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
 			log.Printf("❌ Error updating request with error response: %v", err)
@@ -856,6 +858,7 @@ func (h *Handler) handleStreamingResponse(w http.ResponseWriter, resp *http.Resp
 		responseLog.Body = json.RawMessage(responseBodyBytes)
 	}
 
+	recordResponseCorruption(responseLog, w)
 	requestLog.Response = responseLog
 	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
 		log.Printf("❌ Error updating request with streaming response: %v", err)
@@ -920,10 +923,15 @@ func (h *Handler) handleNonStreamingResponse(w http.ResponseWriter, resp *http.R
 		responseLog.BodyText = string(responseBytes)
 	}
 
-	requestLog.Response = responseLog
-	if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
-		log.Printf("❌ Error updating request with response: %v", err)
-	}
+	// Persist after the response writer has applied any downstream fault, so
+	// capture metadata describes the response actually delivered to the client.
+	defer func() {
+		recordResponseCorruption(responseLog, w)
+		requestLog.Response = responseLog
+		if err := h.storageService.UpdateRequestWithResponse(requestLog); err != nil {
+			log.Printf("❌ Error updating request with response: %v", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Anthropic API error: %d", resp.StatusCode)

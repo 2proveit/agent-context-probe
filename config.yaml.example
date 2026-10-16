@@ -71,6 +71,26 @@ web:
   raw_request_max_display_chars: 0
   raw_response_max_display_chars: 0
 
+# Optional model-response fault injection delivered to downstream harnesses.
+# Upstream requests stay unchanged. Restart after editing this section.
+response_corruption:
+  enabled: false
+  # Fraction of eligible HTTP 200 generation responses to corrupt.
+  probability: 0.05
+  seed: 42
+  # Set probability: 1 and a single mode for a deterministic fault scenario.
+  # Omit modes to choose randomly among all five modes below.
+  modes:
+    - empty_stop
+    - repetition
+    - pseudo_tags
+    - invalid_tool_arguments
+    - truncate_stream
+  # Upper bound on bytes passed from the first chunk before ending an SSE stream.
+  # The actual cut is no later than halfway through that first chunk.
+  # Zero uses the default of 256. This mode does not apply to JSON responses.
+  truncate_after_bytes: 256
+
 # Model aliases (optional). Applies to Anthropic Messages, OpenAI Chat
 # Completions, and OpenAI Responses. Only the model value changes; each
 # request stays on its original protocol's configured upstream URL.
