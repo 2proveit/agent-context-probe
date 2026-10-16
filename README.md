@@ -412,8 +412,8 @@ MIT License. See [LICENSE](LICENSE).
 
 `response_corruption` simulates unstable model responses **received by the
 harness**. Requests still go to the configured provider unchanged. After routing,
-provider conversion, and model-alias restoration, the proxy can replace a selected
-HTTP 200 response with a synthetic bad response in the client's own protocol.
+provider conversion, and model-alias restoration, the proxy can mutate selected output fields of an
+HTTP 200 response in the client's own protocol.
 
 ```text
 Harness -- original request --> Proxy --> Model provider
@@ -431,31 +431,48 @@ response_corruption:
   modes: [empty_stop]
 ```
 
-| Mode                     | What the downstream harness receives                                                                                                                                                    |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `empty_stop`             | A complete reasoning-only response with no visible text or tool calls. Chat ends with `stop`, Messages with `end_turn`, and Responses with `completed` containing only reasoning.       |
-| `repetition`             | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                |
-| `pseudo_tags`            | A complete text response containing fake tool-return and system-warning tags.                                                                                                           |
-| `invalid_tool_arguments` | A call to the first declared request tool with deliberately invalid argument JSON. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object.          |
-| `xml_tool_name`          | A tool call whose name contains XML-style function/parameter text instead of a registered tool name; arguments remain valid `{}`.                                                       |
-| `truncate_stream`        | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset. |
+| Mode                     | What the downstream harness receives                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `empty_stop`             | Removes visible text and tool calls while retaining any remote reasoning. Chat ends with `stop`, Messages with `end_turn`; Responses retains its remote lifecycle and reasoning.               |
+| `repetition`             | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                       |
+| `pseudo_tags`            | A complete text response containing fake tool-return and system-warning tags.                                                                                                                  |
+| `invalid_tool_arguments` | Remote tool calls with deliberately invalid argument JSON, retaining their original names and IDs. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object. |
+| `xml_tool_name`          | A tool call whose name contains XML-style function/parameter text instead of a registered tool name; arguments remain valid `{}`.                                                              |
+| `truncate_stream`        | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset.        |
 
 `xml_tool_name` reproduces a different tool-protocol failure observed in
 `req_c3187a9d53b84415b06b29e885172a22`: the tool name becomes
-`<function=FIRST_TOOL>\n<parameter=name>\nsynthetic-fault\n</parameter>\n</function>`,
+`<function=REMOTE_TOOL>\n<parameter=name>\nsynthetic-fault\n</parameter>\n</function>`,
 while arguments stay valid empty JSON `{}`. It emits a normal tool-call finish
 and complete stream, so a harness must validate the registered tool name even
 when argument decoding succeeds. It is available for all three protocols, both
 JSON and SSE. No tool is executed by the proxy.
 
-For Chat Completions SSE this mode follows the captured data-frame order:
-synthetic reasoning deltas, whitespace content, a tool frame with the entire
-XML name and empty arguments, a continuation containing only `{}` arguments
-(without repeating the call ID/name), `tool_calls` finish, usage, and `[DONE]`.
-Every synthetic SSE event is written and flushed separately. HTTP/TCP can still
-coalesce writes. Historical reasoning text, token counts, timestamps, delays,
-and the original multi-call count are not replayed; the synthetic profile emits
-one call using the first declared tool and reports zero usage.
+For Chat Completions SSE, `xml_tool_name` collects each remote tool name
+(including names split across frames), emits the XML name with empty arguments,
+and emits `{}` in an arguments continuation without repeating the call ID/name.
+All actual tools and their indices are retained. If the remote supplied a single
+tool frame, an arguments continuation is inserted using the same response ID and
+tool index, without inventing an SSE event ID. Reasoning before the first tool
+frame streams immediately; tool frames are buffered until a finish event or EOF
+so fragmented names can be assembled. Each emitted SSE frame is written and
+flushed separately; HTTP/TCP may still coalesce writes. Provider delays and
+historical badcase reasoning are not replayed.
+
+Response IDs, tool-call IDs, Responses item/call references, model names,
+timestamps, usage, and unrelated extension fields come from the actual remote
+response. Unknown fields and large numeric values are preserved. Target output
+fields and the finish reason required by the selected text fault are modified;
+removing tool output in a text/empty fault necessarily removes its call fields.
+Tool faults modify actual returned calls, rather than inventing a call from the
+request's tool declarations. If the provider returns no tool call, a selected
+tool fault leaves the response unchanged.
+
+Usage is retained exactly when supplied, including detail fields, null values,
+and measured zeros. Missing usage remains missing. These are **provider token
+counts**, not a recount of the corrupted text received by the harness. Incomplete
+or unrecognized JSON/SSE is passed through without fabricating successful
+terminal events, IDs, or usage.
 
 The first three modes are based on the observed shapes of repetition,
 pseudo-tag contamination, and reasoning-only empty-stop badcases. They simulate
@@ -496,25 +513,26 @@ boundaries can affect the actual prefix. Invalid intervals, unknown modes,
 and negative limits fail startup even when injection is disabled.
 
 The injector is the final response layer so internal protocol conversion cannot
-repair the fault before it reaches the harness. When the first provider bytes are
-available, the selected synthetic response is flushed and further provider work
-is cancelled through a private context. Subsequent handler output is suppressed.
-For non-streaming protocols the existing handler may have already buffered the
-provider response before injection. Synthetic usage is zero, not measured provider
-usage. Credentials, model-provider URLs, and outgoing request bodies are untouched.
+repair the fault before it reaches the harness. JSON is mutated after a complete
+payload arrives; SSE is parsed across arbitrary write boundaries, retaining event
+metadata and references. Except for `truncate_stream`, injection lets the provider
+finish normally so final usage and terminal events remain available.
+`truncate_stream` forwards a real byte prefix and cancels further provider work.
+Credentials, provider URLs, and outgoing request bodies are untouched.
 
-The client receives `X-Agent-Context-Probe-Corruption` (mode) and
-`X-Agent-Context-Probe-Corruption-Id` (fault ID). Logs record these identifiers,
-the client protocol, and injected byte count without prompt or credential text.
-The captured response headers retain those markers plus
+The client receives `X-Agent-Context-Probe-Corruption` (selected mode) and
+`X-Agent-Context-Probe-Corruption-Id` (local selection ID). These headers do not
+replace IDs in the response body. Selection does not guarantee a mutation if the
+remote lacks the target field, for example a tool fault on a text-only response.
+Captured headers label applied faults with
 `X-Agent-Context-Probe-Corruption-Capture: upstream-before-injection`. SQLite
-continues to store provider-side bytes seen before injection; after cancellation
-that capture may be incomplete and have a stream error. It is **not** a recording
-of the synthetic bytes received by the client. Capture the harness-side raw
-response when assessing recovery.
+stores provider-side bytes before mutation; truncation can leave that capture
+incomplete with a stream error. It does not record the mutated downstream bytes.
+Capture the harness-side raw response and compare it with the same request's
+provider capture when assessing metadata preservation or harness recovery.
 
 Local checks exercise three protocols, both JSON and SSE, byte-for-byte unchanged
-upstream requests, downstream fault contents, cancellation, metadata capture,
+upstream requests, downstream fault contents, real metadata and absent usage, truncation cancellation,
 seed replay, concurrency, and an illustrative bounded retry after an empty stop:
 
 ```bash

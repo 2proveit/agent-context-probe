@@ -41,7 +41,8 @@ type corruptionRequest struct {
 
 // ResponseCorruption runs after Logging has captured the unmodified request.
 // Faults are applied to the final client protocol, after provider conversion and
-// response capture. A private context cancels upstream work once a fault is sent.
+// response capture. Only truncation cancels upstream work early; other modes
+// continue reading so remote identity, metadata and usage can pass through.
 func ResponseCorruption(cfg config.ResponseCorruptionConfig, logger *log.Logger) func(http.Handler) http.Handler {
 	if !cfg.Enabled || cfg.EveryNRequests <= 0 {
 		return func(next http.Handler) http.Handler { return next }
@@ -75,6 +76,7 @@ func ResponseCorruption(cfg config.ResponseCorruptionConfig, logger *log.Logger)
 			defer cancel()
 			writer := &corruptingResponseWriter{ResponseWriter: w, owner: c, cancel: cancel, path: path, model: meta.Model, tool: tool}
 			next.ServeHTTP(writer, r.WithContext(ctx))
+			writer.finish()
 		})
 	}
 }
@@ -109,6 +111,9 @@ type corruptingResponseWriter struct {
 	cancel                      context.CancelFunc
 	path, model, tool, mode, id string
 	committed, emitted, stream  bool
+	pending                     []byte
+	jsonSent                    bool
+	mutation                    *responseMutation
 }
 
 func (w *corruptingResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -144,50 +149,96 @@ func (w *corruptingResponseWriter) Write(p []byte) (int, error) {
 	if w.mode == "" {
 		return w.ResponseWriter.Write(p)
 	}
-	if w.emitted || len(p) == 0 {
-		return len(p), nil
-	}
-	w.emitted = true
-	var payload []byte
 	if w.mode == "truncate_stream" {
-		// Stop inside the first application chunk, with no synthetic terminal event.
+		if w.emitted || len(p) == 0 {
+			return len(p), nil
+		}
+		w.emitted = true
 		n := len(p) / 2
 		if n > w.owner.cfg.TruncateAfterBytes {
 			n = w.owner.cfg.TruncateAfterBytes
 		}
-		payload = p[:n]
-	} else {
-		payload = syntheticResponse(w.path, w.model, w.tool, w.id, w.mode, w.stream)
+		_, err := w.ResponseWriter.Write(p[:n])
+		w.flushUnderlying()
+		w.cancel()
+		return len(p), err
 	}
-	// Flush XML tool-name faults per SSE event so the continuation can reach
-	// clients incrementally. HTTP/TCP may still coalesce adjacent writes.
-	frames := [][]byte{payload}
-	if w.mode == "xml_tool_name" && w.stream {
-		frames = bytes.SplitAfter(payload, []byte("\n\n"))
+	if w.mutation == nil {
+		w.mutation = newResponseMutation(w.path, w.mode)
 	}
-	var err error
+	if !w.stream && w.jsonSent {
+		return w.ResponseWriter.Write(p)
+	}
+	w.pending = append(w.pending, p...)
+	if !w.stream {
+		if json.Valid(w.pending) {
+			body, changed := w.mutation.json(w.pending)
+			w.emitted = changed
+			_, err := w.ResponseWriter.Write(body)
+			w.pending = nil
+			w.jsonSent = true
+			return len(p), err
+		}
+		return len(p), nil
+	}
+	for {
+		end := sseBoundary(w.pending)
+		if end == 0 {
+			break
+		}
+		frame := append([]byte(nil), w.pending[:end]...)
+		w.pending = w.pending[end:]
+		frames, changed := w.mutation.sse(frame)
+		w.emitted = w.emitted || changed
+		if err := w.writeFrames(frames); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func (w *corruptingResponseWriter) flushUnderlying() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+func (w *corruptingResponseWriter) writeFrames(frames [][]byte) error {
 	for _, frame := range frames {
 		if len(frame) == 0 {
 			continue
 		}
-		if _, err = w.ResponseWriter.Write(frame); err != nil {
-			break
+		if _, err := w.ResponseWriter.Write(frame); err != nil {
+			return err
 		}
-		if f, ok := w.ResponseWriter.(http.Flusher); ok {
-			f.Flush()
-		}
+		w.flushUnderlying()
 	}
-	// Cancel only the derived provider context; the downstream response remains
-	// writable and all subsequent handler writes are suppressed.
-	w.cancel()
-	if w.owner.logger != nil {
-		w.owner.logger.Printf("response corruption injected: id=%s mode=%s protocol=%s downstream_bytes=%d", w.id, w.mode, w.path, len(payload))
-	}
-	if err != nil {
-		return 0, err
-	}
-	return len(p), nil
+	return nil
 }
+func (w *corruptingResponseWriter) finish() {
+	if w.mutation != nil {
+		frames, changed := w.mutation.drain()
+		w.emitted = w.emitted || changed
+		_ = w.writeFrames(frames)
+	}
+	// Incomplete JSON/SSE remains incomplete. Never invent IDs, usage or a
+	// successful terminal frame when the provider did not deliver them.
+	if len(w.pending) > 0 {
+		_, _ = w.ResponseWriter.Write(w.pending)
+		w.pending = nil
+		w.flushUnderlying()
+	}
+}
+func sseBoundary(p []byte) int {
+	a, b := bytes.Index(p, []byte("\n\n")), bytes.Index(p, []byte("\r\n\r\n"))
+	if b >= 0 && (a < 0 || b < a) {
+		return b + 4
+	}
+	if a >= 0 {
+		return a + 2
+	}
+	return 0
+}
+
 func (w *corruptingResponseWriter) Flush() {
 	if !w.committed {
 		w.WriteHeader(http.StatusOK)

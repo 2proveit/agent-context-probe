@@ -103,6 +103,9 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%t/%s", path, stream, mode), func(t *testing.T) {
 					original := responseFaultRequest(path, stream, true)
 					healthy := healthyFaultResponse(path, stream)
+					if mode == "xml_tool_name" || mode == "invalid_tool_arguments" {
+						healthy = healthyToolFaultResponse(path, stream)
+					}
 					application, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Seed: 42, Modes: []string{mode}, TruncateAfterBytes: 32}, func(w http.ResponseWriter, r *http.Request) {
 						got, _ := io.ReadAll(r.Body)
 						if !bytes.Equal(got, original) {
@@ -165,7 +168,7 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 					}
 					switch mode {
 					case "empty_stop":
-						if !bytes.Contains(raw, []byte("Synthetic reasoning-only")) || bytes.Contains(raw, []byte("test_tool")) {
+						if bytes.Contains(raw, []byte("healthy-upstream")) || bytes.Contains(raw, []byte("test_tool")) {
 							t.Fatalf("not reasoning-only stop: %s", raw)
 						}
 					case "repetition":
@@ -181,6 +184,16 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 					case "invalid_tool_arguments":
 						if !bytes.Contains(raw, []byte("{invalid")) || !bytes.Contains(raw, []byte("test_tool")) {
 							t.Fatal("missing malformed tool arguments")
+						}
+					}
+					if mode == "xml_tool_name" || mode == "invalid_tool_arguments" {
+						for _, value := range []string{"up_1", "call_remote", "remote-model", "9007199254740993"} {
+							if !bytes.Contains(raw, []byte(value)) {
+								t.Fatalf("lost remote identity/metadata %s: %s", value, raw)
+							}
+						}
+						if bytes.Contains(raw, []byte("chaos_")) {
+							t.Fatal("fault ID leaked into model response body")
 						}
 					}
 					// Captured provider bytes are labelled rather than presented as injected output.
@@ -228,23 +241,19 @@ func TestResponseCorruptionPreservesErrorsAndUnrelatedEndpoints(t *testing.T) {
 	}
 }
 
-func TestInjectedStreamCancelsUpstreamPromptly(t *testing.T) {
-	cancelled := make(chan struct{})
+func TestInjectedStreamPreservesLateUsage(t *testing.T) {
 	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"empty_stop"}}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"id\":\"remote-id\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n")
 		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-		close(cancelled)
+		if r.Context().Err() != nil {
+			t.Error("metadata fault cancelled provider before late usage")
+		}
+		_, _ = io.WriteString(w, "data: {\"id\":\"remote-id\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"healthy-upstream\"},\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":56}}\n\ndata: [DONE]\n\n")
 	})
 	_, body, status := sendFaultHTTP(t, server, "/v1/chat/completions", responseFaultRequest("/v1/chat/completions", true, true))
-	if status != 200 || !bytes.Contains(body, []byte("[DONE]")) {
-		t.Fatalf("injected stop did not arrive: %s", body)
-	}
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
-		t.Fatal("upstream was left running after injection")
+	if status != 200 || !bytes.Contains(body, []byte(`"total_tokens":56`)) || !bytes.Contains(body, []byte(`"id":"remote-id"`)) || bytes.Contains(body, []byte("healthy-upstream")) {
+		t.Fatalf("late metadata not preserved: %s", body)
 	}
 }
 
@@ -452,8 +461,9 @@ func TestResponseCorruptionToolFaultRequiresTool(t *testing.T) {
 func TestResponseCorruptionIntervalAcrossEndpoints(t *testing.T) {
 	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 3, Modes: []string{"xml_tool_name"}}, func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			Model  string `json:"model"`
-			Stream bool   `json:"stream"`
+			Model  string        `json:"model"`
+			Stream bool          `json:"stream"`
+			Tools  []interface{} `json:"tools"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -469,7 +479,11 @@ func TestResponseCorruptionIntervalAcrossEndpoints(t *testing.T) {
 			kind = "text/event-stream"
 		}
 		w.Header().Set("Content-Type", kind)
-		_, _ = io.WriteString(w, healthyFaultResponse(r.URL.Path, request.Stream))
+		body := healthyFaultResponse(r.URL.Path, request.Stream)
+		if len(request.Tools) > 0 {
+			body = healthyToolFaultResponse(r.URL.Path, request.Stream)
+		}
+		_, _ = io.WriteString(w, body)
 	})
 	send := func(path string, stream, tools bool, want string) {
 		t.Helper()
@@ -498,4 +512,68 @@ func TestResponseCorruptionIntervalAcrossEndpoints(t *testing.T) {
 	send("/v1/messages", false, true, "")                     // eligible 4
 	send("/v1/responses", false, true, "")                    // eligible 5
 	send("/v1/chat/completions", true, true, "xml_tool_name") // eligible 6
+}
+
+// Real tool calls rather than a text-only response: field faults may no longer
+// invent a tool invocation, IDs or usage when the provider did not return them.
+func healthyToolFaultResponse(path string, stream bool) string {
+	var message map[string]interface{}
+	switch path {
+	case "/v1/messages":
+		message = map[string]interface{}{"id": "up_1", "type": "message", "role": "assistant", "model": "remote-model", "content": []interface{}{map[string]interface{}{"type": "tool_use", "id": "call_remote", "name": "test_tool", "input": map[string]interface{}{"value": "original"}}}, "stop_reason": "tool_use", "usage": map[string]int{"input_tokens": 11, "output_tokens": 7}}
+	case "/v1/responses":
+		message = map[string]interface{}{"id": "up_1", "object": "response", "created_at": 123, "model": "remote-model", "status": "completed", "output": []interface{}{map[string]interface{}{"id": "fc_remote", "type": "function_call", "call_id": "call_remote", "name": "test_tool", "arguments": "{\"value\":\"original\"}", "status": "completed"}}, "usage": map[string]int{"input_tokens": 11, "output_tokens": 7}}
+	default:
+		message = map[string]interface{}{"id": "up_1", "object": "chat.completion", "created": 123, "system_fingerprint": "fp_remote", "model": "remote-model", "choices": []interface{}{map[string]interface{}{"index": 0, "finish_reason": "tool_calls", "message": map[string]interface{}{"role": "assistant", "tool_calls": []interface{}{map[string]interface{}{"id": "call_remote", "type": "function", "function": map[string]string{"name": "test_tool", "arguments": "{\"value\":\"original\"}"}}}}}}, "usage": map[string]int{"prompt_tokens": 11, "completion_tokens": 7}}
+	}
+	message["vendor_meta"] = map[string]interface{}{"opaque": "keep", "large_integer": json.Number("9007199254740993")}
+	raw, _ := json.Marshal(message)
+	if !stream {
+		return string(raw)
+	}
+	var out strings.Builder
+	emit := func(v interface{}) { raw, _ := json.Marshal(v); out.WriteString("data: " + string(raw) + "\n\n") }
+	switch path {
+	case "/v1/messages":
+		emit(map[string]interface{}{"type": "message_start", "message": message})
+		// Put the tool into start/delta/stop events, not the initial snapshot.
+		out.Reset()
+		start := map[string]interface{}{}
+		for k, v := range message {
+			start[k] = v
+		}
+		start["content"] = []interface{}{}
+		start["stop_reason"] = nil
+		emit(map[string]interface{}{"type": "message_start", "message": start})
+		emit(map[string]interface{}{"type": "content_block_start", "index": 0, "content_block": map[string]interface{}{"type": "tool_use", "id": "call_remote", "name": "test_tool", "input": map[string]interface{}{}}})
+		emit(map[string]interface{}{"type": "content_block_delta", "index": 0, "delta": map[string]string{"type": "input_json_delta", "partial_json": "{\"value\":\"original\"}"}})
+		emit(map[string]interface{}{"type": "content_block_stop", "index": 0})
+		emit(map[string]interface{}{"type": "message_delta", "delta": map[string]string{"stop_reason": "tool_use"}, "usage": map[string]int{"output_tokens": 7}})
+		emit(map[string]interface{}{"type": "message_stop"})
+	case "/v1/responses":
+		item := message["output"].([]interface{})[0]
+		emit(map[string]interface{}{"type": "response.output_item.added", "sequence_number": 0, "output_index": 0, "item": item})
+		emit(map[string]interface{}{"type": "response.function_call_arguments.delta", "sequence_number": 1, "output_index": 0, "item_id": "fc_remote", "delta": "{\"value\":\"original\"}"})
+		emit(map[string]interface{}{"type": "response.function_call_arguments.done", "sequence_number": 2, "output_index": 0, "item_id": "fc_remote", "arguments": "{\"value\":\"original\"}"})
+		emit(map[string]interface{}{"type": "response.output_item.done", "sequence_number": 3, "output_index": 0, "item": item})
+		emit(map[string]interface{}{"type": "response.completed", "sequence_number": 4, "response": message})
+	default:
+		chunk := func(delta interface{}, finish interface{}) {
+			v := map[string]interface{}{}
+			for k, val := range message {
+				v[k] = val
+			}
+			delete(v, "usage")
+			v["object"] = "chat.completion.chunk"
+			v["choices"] = []interface{}{map[string]interface{}{"index": 0, "delta": delta, "finish_reason": finish}}
+			emit(v)
+		}
+		chunk(map[string]string{"role": "assistant"}, nil)
+		chunk(map[string]interface{}{"tool_calls": []interface{}{map[string]interface{}{"index": 0, "id": "call_remote", "type": "function", "function": map[string]string{"name": "test_tool", "arguments": ""}}}}, nil)
+		chunk(map[string]interface{}{"tool_calls": []interface{}{map[string]interface{}{"index": 0, "type": "function", "function": map[string]string{"arguments": "{\"value\":\"original\"}"}}}}, nil)
+		chunk(map[string]interface{}{}, "tool_calls")
+		emit(map[string]interface{}{"id": "up_1", "choices": []interface{}{}, "usage": message["usage"]})
+		out.WriteString("data: [DONE]\n\n")
+	}
+	return out.String()
 }
