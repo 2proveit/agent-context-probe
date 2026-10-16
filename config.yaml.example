@@ -75,10 +75,10 @@ web:
 # Upstream requests stay unchanged. Restart after editing this section.
 response_corruption:
   enabled: false
-  # Fraction of eligible HTTP 200 generation responses to corrupt.
-  probability: 0.05
+  # Inject on the Nth, 2Nth, ... eligible HTTP 200 generation response.
+  every_n_requests: 3
   seed: 42
-  # Set probability: 1 and a single mode for a deterministic fault scenario.
+  # Set every_n_requests: 1 to inject on every eligible response.
   # Omit modes to choose randomly among all six modes below.
   modes:
     - empty_stop

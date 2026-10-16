@@ -21,11 +21,12 @@ const CorruptionIDHeader = "X-Agent-Context-Probe-Corruption-Id"
 const CorruptionCaptureHeader = "X-Agent-Context-Probe-Corruption-Capture"
 
 type responseCorruptor struct {
-	cfg      config.ResponseCorruptionConfig
-	logger   *log.Logger
-	mu       sync.Mutex
-	rng      *rand.Rand
-	sequence atomic.Uint64
+	cfg           config.ResponseCorruptionConfig
+	logger        *log.Logger
+	mu            sync.Mutex
+	rng           *rand.Rand
+	sequence      atomic.Uint64
+	eligibleCount int
 }
 
 type corruptionRequest struct {
@@ -42,7 +43,7 @@ type corruptionRequest struct {
 // Faults are applied to the final client protocol, after provider conversion and
 // response capture. A private context cancels upstream work once a fault is sent.
 func ResponseCorruption(cfg config.ResponseCorruptionConfig, logger *log.Logger) func(http.Handler) http.Handler {
-	if !cfg.Enabled || cfg.Probability == 0 {
+	if !cfg.Enabled || cfg.EveryNRequests <= 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 	cfg.Modes = append([]string(nil), cfg.Modes...)
@@ -94,9 +95,11 @@ func (c *responseCorruptor) choose(stream bool, tool string) string {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.rng.Float64() >= c.cfg.Probability {
+	c.eligibleCount++
+	if c.eligibleCount < c.cfg.EveryNRequests {
 		return ""
 	}
+	c.eligibleCount = 0
 	return candidates[c.rng.Intn(len(candidates))]
 }
 

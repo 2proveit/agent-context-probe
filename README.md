@@ -426,7 +426,7 @@ and restart the proxy. To exercise one failure deterministically:
 ```yaml
 response_corruption:
   enabled: true
-  probability: 1
+  every_n_requests: 1
   seed: 42
   modes: [empty_stop]
 ```
@@ -466,16 +466,33 @@ are excluded.
 
 Omit `modes` to select randomly among all six. `truncate_stream` is excluded for
 non-SSE responses. Tool-call fault modes (`invalid_tool_arguments`,
-`xml_tool_name`) are excluded when no tool is specified. Probability is applied
-to the remaining eligible responses; if none of the requested modes applies, that response passes through without a fault marker.
-Duplicate mode names weight selection. `probability: 0` also disables injection.
-The synchronized generator repeats the same sequence for the same seed, eligible
-response order, streaming format, and tool availability. Concurrent completion
-order can change which request receives a particular fault.
+`xml_tool_name`) are excluded when no tool is specified. Responses with no
+applicable mode pass through without advancing the counter.
+
+`every_n_requests: N` injects on eligible response N, 2N, 3N, and so on.
+For example, N=3 yields healthy, healthy, faulty, healthy, healthy, faulty.
+N=1 injects on every eligible response. Only successful HTTP 200 generation
+responses with at least one applicable mode count. Health checks, Dashboard,
+model listings, upstream errors and connection failures do not count. The
+counter is shared across all three generation endpoints, models and sessions
+within one proxy instance, advances at final response-header selection, and
+resets on restart. Concurrent responses count in selection order, not incoming
+request order; use an isolated proxy for a specific harness experiment.
+
+The feature still defaults to disabled. The interval must be a positive integer
+when enabled; zero is accepted only while disabled, and negative values are
+rejected. The former `probability` setting has been replaced: migrate an enabled
+configuration by setting `every_n_requests` explicitly. An old enabled config
+without an interval fails startup instead of silently enabling random injection.
+
+Mode selection remains seeded and random; duplicate names weight the choice.
+The same seed and eligible response order repeat the selected modes, while the
+interval guarantees trigger positions independently of the seed. Select a single
+mode to reproduce both the fault type and trigger position deterministically.
 
 `truncate_after_bytes` defaults to 256 (also when set to zero). The truncation
 point is the smaller of that limit and half of the first write's bytes, so chunk
-boundaries can affect the actual prefix. Invalid probabilities, unknown modes,
+boundaries can affect the actual prefix. Invalid intervals, unknown modes,
 and negative limits fail startup even when injection is disabled.
 
 The injector is the final response layer so internal protocol conversion cannot
@@ -507,10 +524,11 @@ go test -race ./internal/app ./internal/config ./internal/middleware ./internal/
 
 These tests establish the proxy's fault-delivery behavior. The retry consumer is
 a small test client, not Lumi or OpenCode acceptance. To assess a real harness,
-point its model endpoint at this proxy, start with one mode and probability 1,
-and inspect the harness's validation, retries, tool dispatch, termination, and
-final delivery. Test mixed healthy/faulty responses afterward with a probability
-below 1. Restore `enabled: false` and restart when the experiment is finished.
+point its model endpoint at this proxy, start with one mode and
+`every_n_requests: 1`, and inspect the harness's validation, retries, tool dispatch, termination, and
+final delivery. Test mixed healthy/faulty responses afterward with a larger
+interval, for example `every_n_requests: 3`. Restore `enabled: false` and restart
+when the experiment is finished.
 
 The earlier experimental `request_corruption` implementation mutated upstream
 requests and did not test this failure direction. It has been replaced; use the

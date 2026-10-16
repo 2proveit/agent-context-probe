@@ -28,7 +28,7 @@ func TestXMLToolNameSSEFrames(t *testing.T) {
 	recorder := &faultFrameRecorder{ResponseRecorder: httptest.NewRecorder()}
 	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
 	req = req.WithContext(context.WithValue(req.Context(), model.BodyBytesKey, []byte(`{"model":"client-model","tools":[{"function":{"name":"bash"}}]}`)))
-	handler := ResponseCorruption(config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Modes: []string{"xml_tool_name"}}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := ResponseCorruption(config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"xml_tool_name"}}, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: upstream\n\n"))
 		_, _ = w.Write([]byte("data: original must be suppressed\n\n"))

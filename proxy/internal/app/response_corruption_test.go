@@ -103,7 +103,7 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%t/%s", path, stream, mode), func(t *testing.T) {
 					original := responseFaultRequest(path, stream, true)
 					healthy := healthyFaultResponse(path, stream)
-					application, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Seed: 42, Modes: []string{mode}, TruncateAfterBytes: 32}, func(w http.ResponseWriter, r *http.Request) {
+					application, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Seed: 42, Modes: []string{mode}, TruncateAfterBytes: 32}, func(w http.ResponseWriter, r *http.Request) {
 						got, _ := io.ReadAll(r.Body)
 						if !bytes.Equal(got, original) {
 							t.Errorf("upstream request changed: %s", got)
@@ -195,21 +195,21 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 	}
 }
 
-func TestResponseCorruptionDisabledAndZeroRate(t *testing.T) {
-	for _, setting := range []config.ResponseCorruptionConfig{{}, {Enabled: false, Probability: 1, Modes: []string{"repetition"}}, {Enabled: true, Probability: 0, Modes: []string{"repetition"}}} {
+func TestResponseCorruptionDisabled(t *testing.T) {
+	for _, setting := range []config.ResponseCorruptionConfig{{}, {Enabled: false, EveryNRequests: 1, Modes: []string{"repetition"}}} {
 		_, server := faultApplication(t, setting, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(w, healthyFaultResponse("/v1/chat/completions", true))
 		})
 		headers, body, status := sendFaultHTTP(t, server, "/v1/chat/completions", responseFaultRequest("/v1/chat/completions", true, true))
 		if status != 200 || headers.Get(middleware.CorruptionHeader) != "" || string(body) != healthyFaultResponse("/v1/chat/completions", true) {
-			t.Fatal("default-off/zero-rate forwarding changed")
+			t.Fatal("default-off forwarding changed")
 		}
 	}
 }
 
 func TestResponseCorruptionPreservesErrorsAndUnrelatedEndpoints(t *testing.T) {
-	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Modes: []string{"repetition"}}, func(w http.ResponseWriter, r *http.Request) {
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"repetition"}}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(429)
 		_, _ = io.WriteString(w, `{"error":{"message":"real upstream rate limit"}}`)
@@ -230,7 +230,7 @@ func TestResponseCorruptionPreservesErrorsAndUnrelatedEndpoints(t *testing.T) {
 
 func TestInjectedStreamCancelsUpstreamPromptly(t *testing.T) {
 	cancelled := make(chan struct{})
-	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Modes: []string{"empty_stop"}}, func(w http.ResponseWriter, r *http.Request) {
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"empty_stop"}}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
 		w.(http.Flusher).Flush()
@@ -250,11 +250,17 @@ func TestInjectedStreamCancelsUpstreamPromptly(t *testing.T) {
 
 func TestDownstreamConsumerRetriesAfterInjectedEmptyStop(t *testing.T) {
 	var calls atomic.Int32
-	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: .5, Seed: 42, Modes: []string{"empty_stop"}}, func(w http.ResponseWriter, r *http.Request) {
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 2, Seed: 42, Modes: []string{"empty_stop"}}, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, healthyFaultResponse("/v1/chat/completions", false))
 	})
+	// Warm up one eligible request so this consumer starts at the second,
+	// guaranteed faulty response; its retry is the third, healthy response.
+	headers, _, _ := sendFaultHTTP(t, server, "/v1/chat/completions", responseFaultRequest("/v1/chat/completions", false, true))
+	if headers.Get(middleware.CorruptionHeader) != "" {
+		t.Fatal("warm-up must be healthy")
+	}
 	// A small HTTP consumer demonstrates a bounded recovery path. It is not Lumi
 	// or OpenCode acceptance: reject a completed empty message and retry once.
 	for attempt := 0; attempt < 2; attempt++ {
@@ -283,14 +289,14 @@ func TestDownstreamConsumerRetriesAfterInjectedEmptyStop(t *testing.T) {
 			t.Fatal("retry did not recover")
 		}
 	}
-	if calls.Load() != 2 {
+	if calls.Load() != 3 {
 		t.Fatalf("unexpected retry count: %d", calls.Load())
 	}
 }
 
 func TestResponseCorruptionSeedReplayAndConcurrency(t *testing.T) {
 	replay := func() []string {
-		_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: .5, Seed: 73}, func(w http.ResponseWriter, r *http.Request) {
+		_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 2, Seed: 73}, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, healthyFaultResponse("/v1/chat/completions", false))
 		})
@@ -301,10 +307,16 @@ func TestResponseCorruptionSeedReplayAndConcurrency(t *testing.T) {
 		}
 		return modes
 	}
-	if fmt.Sprint(replay()) != fmt.Sprint(replay()) {
+	first := replay()
+	for i, mode := range first {
+		if (mode != "") != ((i+1)%2 == 0) {
+			t.Fatalf("request %d: unexpected trigger mode %q", i+1, mode)
+		}
+	}
+	if fmt.Sprint(first) != fmt.Sprint(replay()) {
 		t.Fatal("same response order and seed did not replay")
 	}
-	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: .5, Seed: 42}, func(w http.ResponseWriter, r *http.Request) {
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 2, Seed: 42}, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, healthyFaultResponse("/v1/chat/completions", false))
 	})
@@ -323,8 +335,8 @@ func TestResponseCorruptionSeedReplayAndConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if healthy.Load() == 0 || faults.Load() == 0 || healthy.Load()+faults.Load() != 32 {
-		t.Fatal("randomized concurrent responses not mixed")
+	if healthy.Load() != 16 || faults.Load() != 16 {
+		t.Fatal("expected exactly 16 healthy and 16 faulty concurrent responses")
 	}
 }
 
@@ -408,7 +420,7 @@ func TestResponseCorruptionToolFaultRequiresTool(t *testing.T) {
 			for _, mode := range []string{"invalid_tool_arguments", "xml_tool_name"} {
 				t.Run(fmt.Sprintf("%s/%t/%s", path, stream, mode), func(t *testing.T) {
 					healthy := healthyFaultResponse(path, stream)
-					_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Modes: []string{mode}}, func(w http.ResponseWriter, r *http.Request) {
+					_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{mode}}, func(w http.ResponseWriter, r *http.Request) {
 						kind := "application/json"
 						if stream {
 							kind = "text/event-stream"
@@ -435,4 +447,55 @@ func TestResponseCorruptionToolFaultRequiresTool(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestResponseCorruptionIntervalAcrossEndpoints(t *testing.T) {
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 3, Modes: []string{"xml_tool_name"}}, func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if request.Model == "upstream-error" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(429)
+			_, _ = io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+			return
+		}
+		kind := "application/json"
+		if request.Stream {
+			kind = "text/event-stream"
+		}
+		w.Header().Set("Content-Type", kind)
+		_, _ = io.WriteString(w, healthyFaultResponse(r.URL.Path, request.Stream))
+	})
+	send := func(path string, stream, tools bool, want string) {
+		t.Helper()
+		headers, body, status := sendFaultHTTP(t, server, path, responseFaultRequest(path, stream, tools))
+		if status != 200 || headers.Get(middleware.CorruptionHeader) != want {
+			t.Fatalf("%s: want mode %q got %q status %d", path, want, headers.Get(middleware.CorruptionHeader), status)
+		}
+		if want == "xml_tool_name" {
+			assertXMLToolFault(t, body, stream)
+		}
+	}
+	send("/v1/chat/completions", false, true, "") // eligible 1
+	response, err := http.Get(server.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	bad := bytes.Replace(responseFaultRequest("/v1/chat/completions", false, true), []byte("client-model"), []byte("upstream-error"), 1)
+	headers, _, status := sendFaultHTTP(t, server, "/v1/chat/completions", bad)
+	if status != 429 || headers.Get(middleware.CorruptionHeader) != "" {
+		t.Fatal("upstream error should pass through")
+	}
+	send("/v1/chat/completions", true, false, "")             // no applicable mode, does not count
+	send("/v1/messages", true, true, "")                      // eligible 2
+	send("/v1/responses", true, true, "xml_tool_name")        // eligible 3
+	send("/v1/messages", false, true, "")                     // eligible 4
+	send("/v1/responses", false, true, "")                    // eligible 5
+	send("/v1/chat/completions", true, true, "xml_tool_name") // eligible 6
 }
