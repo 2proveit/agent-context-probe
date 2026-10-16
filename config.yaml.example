@@ -79,12 +79,13 @@ response_corruption:
   probability: 0.05
   seed: 42
   # Set probability: 1 and a single mode for a deterministic fault scenario.
-  # Omit modes to choose randomly among all five modes below.
+  # Omit modes to choose randomly among all six modes below.
   modes:
     - empty_stop
     - repetition
     - pseudo_tags
     - invalid_tool_arguments
+    - xml_tool_name
     - truncate_stream
   # Upper bound on bytes passed from the first chunk before ending an SSE stream.
   # The actual cut is no later than halfway through that first chunk.

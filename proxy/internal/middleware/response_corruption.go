@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -46,7 +47,7 @@ func ResponseCorruption(cfg config.ResponseCorruptionConfig, logger *log.Logger)
 	}
 	cfg.Modes = append([]string(nil), cfg.Modes...)
 	if len(cfg.Modes) == 0 {
-		cfg.Modes = []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "truncate_stream"}
+		cfg.Modes = []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream"}
 	}
 	if cfg.TruncateAfterBytes == 0 {
 		cfg.TruncateAfterBytes = 256
@@ -83,7 +84,7 @@ func (c *responseCorruptor) choose(stream bool, tool string) string {
 		if mode == "truncate_stream" && !stream {
 			continue
 		}
-		if mode == "invalid_tool_arguments" && tool == "" {
+		if isToolCorruption(mode) && tool == "" {
 			continue
 		}
 		candidates = append(candidates, mode)
@@ -155,9 +156,23 @@ func (w *corruptingResponseWriter) Write(p []byte) (int, error) {
 	} else {
 		payload = syntheticResponse(w.path, w.model, w.tool, w.id, w.mode, w.stream)
 	}
-	_, err := w.ResponseWriter.Write(payload)
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	// Flush XML tool-name faults per SSE event so the continuation can reach
+	// clients incrementally. HTTP/TCP may still coalesce adjacent writes.
+	frames := [][]byte{payload}
+	if w.mode == "xml_tool_name" && w.stream {
+		frames = bytes.SplitAfter(payload, []byte("\n\n"))
+	}
+	var err error
+	for _, frame := range frames {
+		if len(frame) == 0 {
+			continue
+		}
+		if _, err = w.ResponseWriter.Write(frame); err != nil {
+			break
+		}
+		if f, ok := w.ResponseWriter.(http.Flusher); ok {
+			f.Flush()
+		}
 	}
 	// Cancel only the derived provider context; the downstream response remains
 	// writable and all subsequent handler writes are suppressed.

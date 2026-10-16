@@ -437,7 +437,25 @@ response_corruption:
 | `repetition`             | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                |
 | `pseudo_tags`            | A complete text response containing fake tool-return and system-warning tags.                                                                                                           |
 | `invalid_tool_arguments` | A call to the first declared request tool with deliberately invalid argument JSON. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object.          |
+| `xml_tool_name`          | A tool call whose name contains XML-style function/parameter text instead of a registered tool name; arguments remain valid `{}`.                                                       |
 | `truncate_stream`        | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset. |
+
+`xml_tool_name` reproduces a different tool-protocol failure observed in
+`req_c3187a9d53b84415b06b29e885172a22`: the tool name becomes
+`<function=FIRST_TOOL>\n<parameter=name>\nsynthetic-fault\n</parameter>\n</function>`,
+while arguments stay valid empty JSON `{}`. It emits a normal tool-call finish
+and complete stream, so a harness must validate the registered tool name even
+when argument decoding succeeds. It is available for all three protocols, both
+JSON and SSE. No tool is executed by the proxy.
+
+For Chat Completions SSE this mode follows the captured data-frame order:
+synthetic reasoning deltas, whitespace content, a tool frame with the entire
+XML name and empty arguments, a continuation containing only `{}` arguments
+(without repeating the call ID/name), `tool_calls` finish, usage, and `[DONE]`.
+Every synthetic SSE event is written and flushed separately. HTTP/TCP can still
+coalesce writes. Historical reasoning text, token counts, timestamps, delays,
+and the original multi-call count are not replayed; the synthetic profile emits
+one call using the first declared tool and reports zero usage.
 
 The first three modes are based on the observed shapes of repetition,
 pseudo-tag contamination, and reasoning-only empty-stop badcases. They simulate
@@ -446,10 +464,10 @@ happens after the provider has returned HTTP 200. Upstream 4xx/5xx responses and
 connection failures remain unchanged; health, Dashboard, and model-list endpoints
 are excluded.
 
-Omit `modes` to select randomly among all five. `truncate_stream` is excluded for
-non-SSE responses, and `invalid_tool_arguments` is excluded when no tool is
-specified. Probability is applied to the remaining eligible responses; if none of
-the requested modes applies, that response passes through without a fault marker.
+Omit `modes` to select randomly among all six. `truncate_stream` is excluded for
+non-SSE responses. Tool-call fault modes (`invalid_tool_arguments`,
+`xml_tool_name`) are excluded when no tool is specified. Probability is applied
+to the remaining eligible responses; if none of the requested modes applies, that response passes through without a fault marker.
 Duplicate mode names weight selection. `probability: 0` also disables injection.
 The synchronized generator repeats the same sequence for the same seed, eligible
 response order, streaming format, and tool availability. Concurrent completion

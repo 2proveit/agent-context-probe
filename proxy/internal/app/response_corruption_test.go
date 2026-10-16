@@ -99,7 +99,7 @@ func sendFaultHTTP(t *testing.T, server *httptest.Server, path string, body []by
 func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
 		for _, stream := range []bool{false, true} {
-			for _, mode := range []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "truncate_stream"} {
+			for _, mode := range []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream"} {
 				t.Run(fmt.Sprintf("%s/%t/%s", path, stream, mode), func(t *testing.T) {
 					original := responseFaultRequest(path, stream, true)
 					healthy := healthyFaultResponse(path, stream)
@@ -176,6 +176,8 @@ func TestResponseCorruptionAtDownstreamBoundary(t *testing.T) {
 						if !bytes.Contains(raw, []byte("system_warning")) || !bytes.Contains(raw, []byte("OpenHands Agent")) {
 							t.Fatal("missing pseudo-tags")
 						}
+					case "xml_tool_name":
+						assertXMLToolFault(t, raw, stream)
 					case "invalid_tool_arguments":
 						if !bytes.Contains(raw, []byte("{invalid")) || !bytes.Contains(raw, []byte("test_tool")) {
 							t.Fatal("missing malformed tool arguments")
@@ -323,5 +325,114 @@ func TestResponseCorruptionSeedReplayAndConcurrency(t *testing.T) {
 	wg.Wait()
 	if healthy.Load() == 0 || faults.Load() == 0 || healthy.Load()+faults.Load() != 32 {
 		t.Fatal("randomized concurrent responses not mixed")
+	}
+}
+
+// Check decoded fields rather than raw text: JSON encoding escapes XML tags,
+// and the regression is specifically an unknown name with valid arguments.
+func assertXMLToolFault(t *testing.T, raw []byte, stream bool) {
+	t.Helper()
+	expected := "<function=test_tool>\n<parameter=name>\nsynthetic-fault\n</parameter>\n</function>"
+	names, arguments := 0, 0
+	var walk func(interface{})
+	walk = func(value interface{}) {
+		switch v := value.(type) {
+		case map[string]interface{}:
+			if name, ok := v["name"]; ok {
+				if name != expected {
+					t.Fatalf("tool name was repaired or altered: %v", name)
+				}
+				names++
+			}
+			for _, key := range []string{"arguments", "partial_json"} {
+				if argument, ok := v[key]; ok {
+					if argument != "{}" && argument != "" {
+						t.Fatalf("name fault damaged %s: %v", key, argument)
+					}
+					if argument == "{}" {
+						arguments++
+					}
+				}
+			}
+			if input, ok := v["input"]; ok {
+				object, ok := input.(map[string]interface{})
+				if !ok || len(object) != 0 {
+					t.Fatalf("name fault damaged Messages input: %v", input)
+				}
+				arguments++
+			}
+			if kind, _ := v["type"].(string); kind == "response.function_call_arguments.delta" && v["delta"] != "{}" {
+				t.Fatalf("name fault damaged argument delta: %v", v["delta"])
+			}
+			for _, key := range []string{"finish_reason", "stop_reason"} {
+				if reason := v[key]; reason != nil && reason != "tool_calls" && reason != "tool_use" {
+					t.Fatalf("name fault lost tool-call finish: %v", reason)
+				}
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []interface{}:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	decode := func(data []byte) {
+		var value interface{}
+		if err := json.Unmarshal(data, &value); err != nil {
+			t.Fatal(err)
+		}
+		walk(value)
+	}
+	if stream {
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "data:") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data != "[DONE]" {
+					decode([]byte(data))
+				}
+			}
+		}
+	} else {
+		decode(raw)
+	}
+	if names == 0 || arguments == 0 {
+		t.Fatalf("missing XML tool name or valid arguments: names=%d arguments=%d", names, arguments)
+	}
+}
+
+func TestResponseCorruptionToolFaultRequiresTool(t *testing.T) {
+	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/responses"} {
+		for _, stream := range []bool{false, true} {
+			for _, mode := range []string{"invalid_tool_arguments", "xml_tool_name"} {
+				t.Run(fmt.Sprintf("%s/%t/%s", path, stream, mode), func(t *testing.T) {
+					healthy := healthyFaultResponse(path, stream)
+					_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, Probability: 1, Modes: []string{mode}}, func(w http.ResponseWriter, r *http.Request) {
+						kind := "application/json"
+						if stream {
+							kind = "text/event-stream"
+						}
+						w.Header().Set("Content-Type", kind)
+						_, _ = io.WriteString(w, healthy)
+					})
+					headers, body, status := sendFaultHTTP(t, server, path, responseFaultRequest(path, stream, false))
+					// The existing Messages handler forwards data frames and removes
+					// event-name lines even when corruption is disabled.
+					if path == "/v1/messages" && stream {
+						var lines []string
+						for _, line := range strings.Split(healthy, "\n") {
+							if !strings.HasPrefix(line, "event:") {
+								lines = append(lines, line)
+							}
+						}
+						healthy = strings.Join(lines, "\n")
+					}
+					if status != 200 || string(body) != healthy || headers.Get(middleware.CorruptionHeader) != "" {
+						t.Fatalf("tool fault injected without declared tools: %s", body)
+					}
+				})
+			}
+		}
 	}
 }
