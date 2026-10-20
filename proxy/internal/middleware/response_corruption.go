@@ -49,7 +49,7 @@ func ResponseCorruption(cfg config.ResponseCorruptionConfig, logger *log.Logger)
 	}
 	cfg.Modes = append([]string(nil), cfg.Modes...)
 	if len(cfg.Modes) == 0 {
-		cfg.Modes = []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream"}
+		cfg.Modes = []string{"empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream", "reasoning_repetition", "truncated_tool_arguments"}
 	}
 	if cfg.TruncateAfterBytes == 0 {
 		cfg.TruncateAfterBytes = 256

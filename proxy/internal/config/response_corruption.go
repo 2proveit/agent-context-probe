@@ -25,7 +25,7 @@ func (c ResponseCorruptionConfig) Validate() error {
 	}
 	for _, mode := range c.Modes {
 		switch mode {
-		case "empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream":
+		case "empty_stop", "repetition", "pseudo_tags", "invalid_tool_arguments", "xml_tool_name", "truncate_stream", "reasoning_repetition", "truncated_tool_arguments":
 		default:
 			return fmt.Errorf("unknown response_corruption mode %q", mode)
 		}

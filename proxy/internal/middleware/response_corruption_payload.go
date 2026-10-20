@@ -38,7 +38,7 @@ func corruptionText(mode string) string {
 	return ""
 }
 func isToolCorruption(mode string) bool {
-	return mode == "invalid_tool_arguments" || mode == "xml_tool_name"
+	return mode == "invalid_tool_arguments" || mode == "xml_tool_name" || mode == "truncated_tool_arguments"
 }
 func xmlToolName(name string) string {
 	return "<function=" + name + ">\n<parameter=name>\nsynthetic-fault\n</parameter>\n</function>"
@@ -51,14 +51,17 @@ func faultArguments(mode string) string {
 }
 
 type responseMutation struct {
-	path, mode string
-	seen       map[string]bool
-	blocks     map[string]string
-	queued     [][]byte
+	path, mode   string
+	seen         map[string]bool
+	blocks       map[string]string
+	queued       [][]byte
+	prefixes     map[string]*argumentPrefix
+	reasonCounts map[string]int
+	toolChoices  map[string]bool
 }
 
 func newResponseMutation(path, mode string) *responseMutation {
-	return &responseMutation{path: path, mode: mode, seen: map[string]bool{}, blocks: map[string]string{}}
+	return &responseMutation{path: path, mode: mode, seen: map[string]bool{}, blocks: map[string]string{}, prefixes: map[string]*argumentPrefix{}, reasonCounts: map[string]int{}, toolChoices: map[string]bool{}}
 }
 func (m *responseMutation) tool(v object) bool {
 	if v == nil {
@@ -197,6 +200,9 @@ func (m *responseMutation) response(v object) bool {
 	return changed
 }
 func (m *responseMutation) json(raw []byte) ([]byte, bool) {
+	if m.advanced() {
+		return m.advancedJSON(raw)
+	}
 	v := decodeObject(raw)
 	if v == nil {
 		return raw, false
@@ -258,6 +264,9 @@ func frameWith(raw []byte, v object) []byte {
 func choiceKey(c object) string  { return string(encodeFault(c["index"])) }
 func toolKey(c, t object) string { return choiceKey(c) + ":" + string(encodeFault(t["index"])) }
 func (m *responseMutation) sse(raw []byte) ([][]byte, bool) {
+	if m.advanced() {
+		return m.advancedSSE(raw)
+	}
 	v := frameObject(raw)
 	if m.path == "/v1/chat/completions" && isToolCorruption(m.mode) {
 		tool, finish := false, false

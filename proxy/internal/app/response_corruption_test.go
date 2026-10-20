@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -576,4 +578,87 @@ func healthyToolFaultResponse(path string, stream bool) string {
 		out.WriteString("data: [DONE]\n\n")
 	}
 	return out.String()
+}
+
+func TestTruncatedToolArgumentsAtDownstreamBoundary(t *testing.T) {
+	for _, path := range []string{"/v1/chat/completions", "/v1/messages", "/v1/responses"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/%t", path, stream), func(t *testing.T) {
+				original := responseFaultRequest(path, stream, true)
+				_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"truncated_tool_arguments"}}, func(w http.ResponseWriter, r *http.Request) {
+					got, _ := io.ReadAll(r.Body)
+					if !bytes.Equal(original, got) {
+						t.Error("changed outgoing request")
+					}
+					kind := "application/json"
+					if stream {
+						kind = "text/event-stream"
+					}
+					w.Header().Set("Content-Type", kind)
+					io.WriteString(w, healthyToolFaultResponse(path, stream))
+				})
+				h, b, status := sendFaultHTTP(t, server, path, original)
+				if status != 200 || h.Get(middleware.CorruptionHeader) != "truncated_tool_arguments" {
+					t.Fatalf("not delivered: %d %s", status, b)
+				}
+				for _, keep := range []string{"up_1", "call_remote", "remote-model", "9007199254740993", "original"} {
+					if !bytes.Contains(b, []byte(keep)) {
+						t.Fatalf("lost %s: %s", keep, b)
+					}
+				}
+				terminal := "length"
+				if path == "/v1/messages" {
+					terminal = "max_tokens"
+				}
+				if path == "/v1/responses" {
+					terminal = "max_output_tokens"
+				}
+				if !bytes.Contains(b, []byte(terminal)) {
+					t.Fatalf("missing length terminal: %s", b)
+				}
+				if stream && path == "/v1/chat/completions" && !bytes.Contains(b, []byte("[DONE]")) {
+					t.Fatal("truncated SSE instead of arguments")
+				}
+			})
+		}
+	}
+}
+
+func TestReasoningFaultDeliveredBeforeUpstreamFinishesAndClientCanCancel(t *testing.T) {
+	cancelled := make(chan struct{})
+	_, server := faultApplication(t, config.ResponseCorruptionConfig{Enabled: true, EveryNRequests: 1, Modes: []string{"reasoning_repetition"}}, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"remote_live\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"healthy reasoning\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-time.After(3 * time.Second):
+			t.Error("downstream cancellation did not reach provider")
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/v1/chat/completions", bytes.NewReader(responseFaultRequest("/v1/chat/completions", true, false)))
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(resp.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "我需要重新检查上一轮的执行结果。") || !strings.Contains(line, "remote_live") {
+		t.Fatalf("not a live reasoning fault: %s", line)
+	}
+	cancel()
+	resp.Body.Close()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("provider not cancelled")
+	}
 }

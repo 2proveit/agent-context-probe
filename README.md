@@ -431,14 +431,39 @@ response_corruption:
   modes: [empty_stop]
 ```
 
-| Mode                     | What the downstream harness receives                                                                                                                                                           |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `empty_stop`             | Removes visible text and tool calls while retaining any remote reasoning. Chat ends with `stop`, Messages with `end_turn`; Responses retains its remote lifecycle and reasoning.               |
-| `repetition`             | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                       |
-| `pseudo_tags`            | A complete text response containing fake tool-return and system-warning tags.                                                                                                                  |
-| `invalid_tool_arguments` | Remote tool calls with deliberately invalid argument JSON, retaining their original names and IDs. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object. |
-| `xml_tool_name`          | A tool call whose name contains XML-style function/parameter text instead of a registered tool name; arguments remain valid `{}`.                                                              |
-| `truncate_stream`        | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset.        |
+| Mode                       | What the downstream harness receives                                                                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `empty_stop`               | Removes visible text and tool calls while retaining any remote reasoning. Chat ends with `stop`, Messages with `end_turn`; Responses retains its remote lifecycle and reasoning.               |
+| `repetition`               | A complete text response with `果树。` repeated 1,400 times and a replacement character.                                                                                                       |
+| `pseudo_tags`              | A complete text response containing fake tool-return and system-warning tags.                                                                                                                  |
+| `invalid_tool_arguments`   | Remote tool calls with deliberately invalid argument JSON, retaining their original names and IDs. For non-streaming Messages, `tool_use.input` is deliberately a string instead of an object. |
+| `xml_tool_name`            | A tool call whose name contains XML-style function/parameter text instead of a registered tool name; arguments remain valid `{}`.                                                              |
+| `reasoning_repetition`     | Repeated text in existing reasoning fields, streamed incrementally; leaves visible output and actual tool calls unchanged.                                                                     |
+| `truncated_tool_arguments` | Actual argument JSON prefixes without closing delimiters, with a complete length-limited stream and real usage.                                                                                |
+| `truncate_stream`          | Only a prefix of the first SSE application chunk, followed by EOF without the protocol's terminal event. This is incomplete SSE inside a normally ended HTTP response, not a TCP reset.        |
+
+`reasoning_repetition` changes only existing nonempty reasoning fields (Chat
+`reasoning_content`, Messages `thinking`, and Responses reasoning text/summary).
+It leaves visible content, actual tool calls, finish states and usage intact.
+Each existing nonempty SSE reasoning delta becomes eight copies of a fixed
+repeat unit and is flushed immediately; it does not wait for stream completion
+or invent reasoning when the provider returns none. JSON reasoning fields use
+64 copies. Responses delta, done and final item snapshots remain consistent.
+This exercises detection during generation and downstream cancellation, unlike
+`repetition`, which targets visible text. Captured streams missing terminal
+frames after a guard retry do not by themselves prove an upstream disconnect.
+
+`truncated_tool_arguments` retains actual tool names, IDs and argument prefixes,
+but stops before the outer JSON object/array closes. Prefix scanning carries
+quote/escape/nesting state across SSE deltas, so nested JSON and UTF-8 strings
+remain intact. The SSE itself still ends normally: Chat uses `length`, Messages
+uses `max_tokens`, and Responses uses `response.incomplete` / `incomplete` with
+`max_output_tokens`. Actual usage and terminal events are retained; missing
+usage stays missing. No tool call or successful terminal event is invented when
+absent upstream. Messages JSON cannot carry partial object bytes, so its
+`tool_use.input` is deliberately a string containing the incomplete JSON prefix.
+This models the row-163 case (unfinished arguments with a complete length-limited
+stream), separately from `truncate_stream`, which cuts the SSE bytes themselves.
 
 `xml_tool_name` reproduces a different tool-protocol failure observed in
 `req_c3187a9d53b84415b06b29e885172a22`: the tool name becomes
@@ -481,9 +506,9 @@ happens after the provider has returned HTTP 200. Upstream 4xx/5xx responses and
 connection failures remain unchanged; health, Dashboard, and model-list endpoints
 are excluded.
 
-Omit `modes` to select randomly among all six. `truncate_stream` is excluded for
+Omit `modes` to select randomly among all eight. `truncate_stream` is excluded for
 non-SSE responses. Tool-call fault modes (`invalid_tool_arguments`,
-`xml_tool_name`) are excluded when no tool is specified. Responses with no
+`xml_tool_name`, `truncated_tool_arguments`) are excluded when no tool is specified. Responses with no
 applicable mode pass through without advancing the counter.
 
 `every_n_requests: N` injects on eligible response N, 2N, 3N, and so on.

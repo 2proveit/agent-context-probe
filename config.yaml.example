@@ -79,12 +79,14 @@ response_corruption:
   every_n_requests: 3
   seed: 42
   # Set every_n_requests: 1 to inject on every eligible response.
-  # Omit modes to choose randomly among all six modes below.
+  # Omit modes to choose randomly among all eight modes below.
   modes:
     - empty_stop
     - repetition
+    - reasoning_repetition
     - pseudo_tags
     - invalid_tool_arguments
+    - truncated_tool_arguments
     - xml_tool_name
     - truncate_stream
   # Upper bound on bytes passed from the first chunk before ending an SSE stream.

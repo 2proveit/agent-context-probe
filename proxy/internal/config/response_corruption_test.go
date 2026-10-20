@@ -14,7 +14,7 @@ func TestResponseCorruptionYAML(t *testing.T) {
 		t.Fatalf("must default off: %v", err)
 	}
 	file := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(file, []byte("response_corruption:\n  enabled: true\n  every_n_requests: 1\n  seed: 42\n  modes: [empty_stop, truncate_stream, xml_tool_name]\n  truncate_after_bytes: 128\n"), 0600); err != nil {
+	if err := os.WriteFile(file, []byte("response_corruption:\n  enabled: true\n  every_n_requests: 1\n  seed: 42\n  modes: [empty_stop, truncate_stream, xml_tool_name, reasoning_repetition, truncated_tool_arguments]\n  truncate_after_bytes: 128\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err = LoadWithOptions(LoadOptions{ConfigPath: file, StandardPaths: &standard})
@@ -22,7 +22,7 @@ func TestResponseCorruptionYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := cfg.ResponseCorruption
-	if !c.Enabled || c.EveryNRequests != 1 || c.Seed != 42 || len(c.Modes) != 3 || c.Modes[2] != "xml_tool_name" || c.TruncateAfterBytes != 128 {
+	if !c.Enabled || c.EveryNRequests != 1 || c.Seed != 42 || len(c.Modes) != 5 || c.Modes[2] != "xml_tool_name" || c.TruncateAfterBytes != 128 {
 		t.Fatalf("wrong YAML: %+v", c)
 	}
 }
