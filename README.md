@@ -410,6 +410,12 @@ MIT License. See [LICENSE](LICENSE).
 
 ## Downstream response fault injection
 
+Enterprise deployments may use self-hosted models with incomplete adaptations
+in open-source inference frameworks, gateways, or middleware, producing malformed
+responses or lower reliability than the model provider's official endpoint.
+Response corruption simulates these failures to verify that our harness detects
+invalid model output and handles it with appropriate recovery or fallback behavior.
+
 `response_corruption` simulates unstable model responses **received by the
 harness**. Requests still go to the configured provider unchanged. After routing,
 provider conversion, and model-alias restoration, the proxy can mutate selected output fields of an
