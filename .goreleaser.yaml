@@ -59,6 +59,12 @@ archives:
           group: root
           mode: 0644
           mtime: "{{ .CommitDate }}"
+      - src: docs/response-fault-injection.md
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
       - src: LICENSE
         info:
           owner: root
