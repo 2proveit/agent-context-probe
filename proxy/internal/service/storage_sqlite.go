@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 
 	"github.com/seifghazi/claude-code-monitor/internal/capture"
 	"github.com/seifghazi/claude-code-monitor/internal/config"
@@ -24,6 +26,37 @@ type sqliteStorageService struct {
 }
 
 const CurrentSchemaVersion = 2
+
+const sqliteBusyTimeout = 3 * time.Second
+
+// Use a connector-local hook so every replacement connection gets the same
+// timeout without changing the configured filesystem path or global driver.
+type sqliteStorageConnector struct {
+	path   string
+	driver sqlite.Driver
+}
+
+func (c *sqliteStorageConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.driver.Open(c.path)
+}
+
+func (c *sqliteStorageConnector) Driver() driver.Driver { return &c.driver }
+
+func openSQLiteCaptureDatabase(path string) *sql.DB {
+	connector := &sqliteStorageConnector{path: path}
+	connector.driver.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, _ string) error {
+		_, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", sqliteBusyTimeout.Milliseconds()), nil)
+		return err
+	})
+	db := sql.OpenDB(connector)
+	// SQLite permits one writer at a time. Queue this process's storage work
+	// on one retained connection; busy_timeout covers independent writers.
+	db.SetMaxOpenConns(1)
+	return db
+}
 
 type MigrationReport struct {
 	PreviousVersion int
@@ -64,10 +97,7 @@ func OpenSQLiteStorageService(cfg *config.StorageConfig) (StorageService, Migrat
 		return nil, report, err
 	}
 
-	db, err := sql.Open("sqlite", cfg.DBPath)
-	if err != nil {
-		return nil, report, fmt.Errorf("failed to open database: %w", err)
-	}
+	db := openSQLiteCaptureDatabase(cfg.DBPath)
 
 	service := &sqliteStorageService{
 		db:     db,
@@ -360,12 +390,12 @@ func InspectSQLiteSchema(path string) (SchemaInspection, error) {
 func (s *sqliteStorageService) SaveRequest(request *model.RequestLog) (string, error) {
 	headersJSON, err := json.Marshal(capture.Headers(request.Headers))
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal headers: %w", err)
+		return "", fmt.Errorf("failed to marshal headers for request %s: %w", request.RequestID, err)
 	}
 
 	bodyJSON, err := json.Marshal(request.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal body: %w", err)
+		return "", fmt.Errorf("failed to marshal body for request %s: %w", request.RequestID, err)
 	}
 
 	query := `
@@ -388,7 +418,7 @@ func (s *sqliteStorageService) SaveRequest(request *model.RequestLog) (string, e
 	)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to insert request: %w", err)
+		return "", fmt.Errorf("failed to insert request %s: %w", request.RequestID, err)
 	}
 
 	return request.RequestID, nil
@@ -495,13 +525,13 @@ func (s *sqliteStorageService) ClearRequests() (int, error) {
 func (s *sqliteStorageService) UpdateRequestWithGrading(requestID string, grade *model.PromptGrade) error {
 	gradeJSON, err := json.Marshal(grade)
 	if err != nil {
-		return fmt.Errorf("failed to marshal grade: %w", err)
+		return fmt.Errorf("failed to marshal grade for request %s: %w", requestID, err)
 	}
 
 	query := "UPDATE requests SET prompt_grade = ? WHERE id = ?"
 	_, err = s.db.Exec(query, string(gradeJSON), requestID)
 	if err != nil {
-		return fmt.Errorf("failed to update request with grading: %w", err)
+		return fmt.Errorf("failed to update request %s with grading: %w", requestID, err)
 	}
 
 	return nil
@@ -516,13 +546,20 @@ func (s *sqliteStorageService) UpdateRequestWithResponse(request *model.RequestL
 	}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
-		return fmt.Errorf("failed to marshal response: %w", err)
+		return fmt.Errorf("failed to marshal response for request %s: %w", request.RequestID, err)
 	}
 
 	query := "UPDATE requests SET response = ? WHERE id = ?"
-	_, err = s.db.Exec(query, string(responseJSON), request.RequestID)
+	result, err := s.db.Exec(query, string(responseJSON), request.RequestID)
 	if err != nil {
-		return fmt.Errorf("failed to update request with response: %w", err)
+		return fmt.Errorf("failed to update request %s with response: %w", request.RequestID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check response update for request %s: %w", request.RequestID, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("failed to update request %s with response: %w", request.RequestID, sql.ErrNoRows)
 	}
 
 	return nil

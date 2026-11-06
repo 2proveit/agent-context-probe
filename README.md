@@ -271,6 +271,12 @@ Environment variables:
 it does not truncate the proxied exchange. The raw display limits affect only
 Dashboard rendering and not the stored value.
 
+SQLite capture operations share one connection to serialize in-process writes.
+Each connection waits up to 3 seconds for an external database lock; a final
+capture failure is logged with the request ID. Large history reads or exports
+can delay queued captures. This does not change the configured database path,
+schema, or forwarded response bytes.
+
 ### Database schema upgrades
 
 SQLite schema versions are recorded with `PRAGMA user_version`. A database
