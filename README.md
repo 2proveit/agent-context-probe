@@ -31,6 +31,22 @@ The proxy, management API, health check, and Dashboard share
 - Sensitive request and response headers redacted before SQLite persistence
 - Explicit token authentication for non-loopback listening
 
+### Codex SDK session traces
+
+Codex SDK requests (typically `Originator: codex_sdk_ts`) are grouped by
+`Thread-Id`, so each agent retains its own model-call timeline even when parent
+and child agents share `Session-Id`. `X-Codex-Parent-Thread-Id` links each child
+to its direct parent, including nested subagents. Child threads without a
+`task` tool-call association are displayed separately within the parent trace.
+
+Identity headers are matched case-insensitively, using the first non-empty value
+in this order: `Thread-Id`, `X-Session-Affinity`, `X-OpenCode-Session`,
+`X-Claude-Code-Session-Id`, then `Session-Id`. Without any identity header, each
+request remains separate. Shared `Session-Id` alone does not establish a direct
+parent relationship; threads whose parent is absent from the captured history
+are shown as roots. Existing stored headers are used when loading session views,
+so previously captured requests benefit without a database migration.
+
 For streaming model responses, the stored response includes `firstTokenAt`
 (RFC 3339 timestamp) and `ttftMs` (milliseconds from the proxy handler's request
 start to the first completed SSE data line with generated text, reasoning, or

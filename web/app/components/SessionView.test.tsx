@@ -775,3 +775,57 @@ test("renders later prompts across Anthropic Messages and OpenAI Responses witho
     assert.match(markup, /Response interrupted/, testCase.name);
   }
 });
+
+test("renders Codex child threads without a task tool association", () => {
+  const makeDetail = (id: string, parent?: string): SessionDetail => ({
+    summary: {
+      sessionId: id,
+      parentSessionId: parent,
+      kind: parent ? "subagent" : "root",
+      title: `${id} trace`,
+      status: "captured",
+      requestCount: 1,
+      toolCallCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      responseTimeMs: 0,
+      elapsedTimeMs: 0,
+      firstTimestamp: "2026-11-09T10:00:00Z",
+      lastTimestamp: "2026-11-09T10:00:00Z",
+    },
+    requests: [
+      {
+        id,
+        requestId: id,
+        timestamp: "2026-11-09T10:00:00Z",
+        method: "POST",
+        endpoint: "/v1/responses",
+        headers: { "Session-Id": ["root"], "Thread-Id": [id] },
+        body: { input: `${id} prompt` },
+      },
+    ],
+  });
+  const root = makeDetail("root");
+  const child = makeDetail("child", "root");
+  child.children = [makeDetail("grandchild", "child")];
+  root.children = [child];
+  const markup = renderToStaticMarkup(
+    <SessionView
+      sessions={[root.summary]}
+      total={1}
+      selectedSessionId="root"
+      detail={root}
+      isLoadingList={false}
+      isLoadingDetail={false}
+      onSelectSession={() => undefined}
+      onOpenRequest={() => undefined}
+    />
+  );
+  for (const id of ["root", "child", "grandchild"]) {
+    assert.equal(
+      markup.match(new RegExp(`data-session-timeline-id="${id}"`, "g"))?.length,
+      1
+    );
+    assert.ok(markup.includes(`${id} prompt`));
+  }
+});
