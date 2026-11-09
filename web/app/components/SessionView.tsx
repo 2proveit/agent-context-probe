@@ -1875,6 +1875,26 @@ function SessionTimeline({
           })}
         </div>
 
+        {(detail.children ?? []).some(
+          (childDetail) => !childDetail.summary.taskCallId
+        ) ? (
+          <div className="mt-4 space-y-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+              Subagent threads
+            </div>
+            {(detail.children ?? [])
+              .filter((childDetail) => !childDetail.summary.taskCallId)
+              .map((childDetail) => (
+                <SessionTimeline
+                  key={childDetail.summary.sessionId}
+                  detail={childDetail}
+                  onOpenRequest={onOpenRequest}
+                  child
+                />
+              ))}
+          </div>
+        ) : null}
+
         {summary.resultMessage ? (
           <div
             className={`mt-2 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm ${summary.status === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}

@@ -154,13 +154,16 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 
 	groups := make(map[string]*sessionGroup)
 	for _, request := range requests {
-		sessionID := firstHeader(request.Headers, "X-Session-Affinity", "X-OpenCode-Session", "X-Claude-Code-Session-Id")
+		// Codex agents share Session-Id but have distinct Thread-Id values. Use
+		// the thread as this API's per-agent session identity to avoid merging
+		// parent and child requests (including when affinity is shared).
+		sessionID := firstHeader(request.Headers, "Thread-Id", "X-Session-Affinity", "X-OpenCode-Session", "X-Claude-Code-Session-Id", "Session-Id")
 		if sessionID == "" {
 			sessionID = "request:" + request.RequestID
 		}
 		group := groups[sessionID]
 		if group == nil {
-			parentID := firstHeader(request.Headers, "X-Parent-Session-Id")
+			parentID := firstHeader(request.Headers, "X-Codex-Parent-Thread-Id", "X-Parent-Session-Id")
 			purpose := firstHeader(request.Headers, "X-Lumi-Session-Purpose")
 			group = &sessionGroup{summary: &sessionSummary{
 				SessionID:       sessionID,
@@ -172,6 +175,12 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 				LastTimestamp:   request.Timestamp,
 			}}
 			groups[sessionID] = group
+		}
+		// Earlier captured requests may lack parent metadata. Shared Session-Id
+		// alone cannot identify the direct parent of a nested agent.
+		if group.summary.ParentSessionID == "" {
+			group.summary.ParentSessionID = firstHeader(request.Headers, "X-Codex-Parent-Thread-Id", "X-Parent-Session-Id")
+			group.summary.Kind = sessionKind(group.summary.ParentSessionID)
 		}
 
 		group.requests = append(group.requests, request)
@@ -501,8 +510,12 @@ func linkTaskInvocations(groups map[string]*sessionGroup, invocations []taskInvo
 func firstHeader(headers map[string][]string, names ...string) string {
 	for _, name := range names {
 		for key, values := range headers {
-			if strings.EqualFold(key, name) && len(values) > 0 {
-				return strings.TrimSpace(values[0])
+			if strings.EqualFold(key, name) {
+				for _, value := range values {
+					if value = strings.TrimSpace(value); value != "" {
+						return value
+					}
+				}
 			}
 		}
 	}
