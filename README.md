@@ -23,6 +23,7 @@ The proxy, management API, health check, and Dashboard share
 - First generated stream content timestamp and proxy-observed TTFT in request history
 - SQLite request history with model, time, and header filters
 - Session and parent/subagent trace views
+- [Agent framework integrations](docs/agent-framework-compatibility.md) for Codex, OpenCode, Claude Code, LangChain/LangGraph, OpenAI Agents SDK, AutoGen, and CrewAI
 - Normalized messages, reasoning, tool calls, tool results, token usage, and latency
 - Optional Claude Code subagent routing to different upstream models
 - Optional [downstream response fault injection](#downstream-response-fault-injection) for harness testing
@@ -40,12 +41,18 @@ to its direct parent, including nested subagents. Child threads without a
 `task` tool-call association are displayed separately within the parent trace.
 
 Identity headers are matched case-insensitively, using the first non-empty value
-in this order: `Thread-Id`, `X-Session-Affinity`, `X-OpenCode-Session`,
-`X-Claude-Code-Session-Id`, then `Session-Id`. Without any identity header, each
+in this order: `Thread-Id`, `X-Thread-Id`, `X-Session-Affinity`,
+`X-OpenCode-Session`, `X-Claude-Code-Session-Id`, `Session-Id`, `X-Session-Id`,
+then `X-Conversation-Id`. Without any identity header, each
 request remains separate. Shared `Session-Id` alone does not establish a direct
 parent relationship; threads whose parent is absent from the captured history
 are shown as roots. Existing stored headers are used when loading session views,
 so previously captured requests benefit without a database migration.
+
+History reconstructed from the first captured request preserves the original
+order of user prompts and tool calls. Consecutive user messages, such as Codex
+context followed by task instructions, are displayed together as one turn.
+Assistant messages and tool results separate genuine follow-up turns.
 
 For streaming model responses, the stored response includes `firstTokenAt`
 (RFC 3339 timestamp) and `ttftMs` (milliseconds from the proxy handler's request

@@ -56,8 +56,17 @@ interface UserPromptEvent {
   turn: number;
 }
 
+type RequestHistoryItem =
+  | { kind: "prompt"; prompt: string }
+  | { kind: "tool"; call: TimelineToolCall }
+  | { kind: "boundary" };
+
+type HistoryTimelineItem =
+  | { kind: "prompt"; event: UserPromptEvent }
+  | { kind: "tool"; call: TimelineToolCall };
+
 interface UserPromptTimeline {
-  initialPrompt?: UserPromptEvent;
+  initialHistory: HistoryTimelineItem[];
   followUpsByRequest: Map<string, UserPromptEvent[]>;
   turnByRequest: Map<string, number>;
   turnCount: number;
@@ -204,26 +213,59 @@ function userPromptText(content: unknown) {
   return stripContextBlocks(text);
 }
 
-function requestUserPrompts(request: RequestRecord) {
-  const prompts: string[] = [];
-  const append = (content: unknown) => {
-    const prompt = userPromptText(content);
-    if (prompt) prompts.push(prompt);
+// Keep source positions before separating prompts from tools. Adjacent user
+// messages (e.g. Codex context followed by the task) belong to one user turn;
+// assistant messages and tool results are boundaries, even without visible text.
+function requestHistoryItems(request: RequestRecord): RequestHistoryItem[] {
+  const items: RequestHistoryItem[] = [];
+  const prompt = (content: unknown) => {
+    const text = userPromptText(content);
+    if (!text) return;
+    const previous = items.at(-1);
+    if (previous?.kind === "prompt") previous.prompt += `\n\n${text}`;
+    else items.push({ kind: "prompt", prompt: text });
   };
+  const boundary = () => items.push({ kind: "boundary" });
+  const tool = (call: TimelineToolCall) => items.push({ kind: "tool", call });
 
   for (const message of request.body?.messages ?? []) {
-    if (message.role === "user") append(message.content);
-  }
-
-  const input = request.body?.input;
-  if (typeof input === "string") {
-    append(input);
-  } else if (Array.isArray(input)) {
-    for (const item of input) {
-      if (item?.role === "user") append(item.content);
+    if (message.role !== "user") boundary();
+    if (message.role === "user" && typeof message.content === "string")
+      prompt(message.content);
+    for (const call of message.tool_calls ?? []) {
+      tool({
+        id: call.id ?? call.call_id,
+        name: call.function?.name ?? "tool",
+        arguments: parseArguments(call.function?.arguments),
+      });
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block?.type === "tool_use") {
+        tool({
+          id: block.id,
+          name: block.name ?? "tool",
+          arguments: block.input,
+        });
+      } else if (block?.type === "tool_result") boundary();
+      else if (message.role === "user") prompt([block]);
     }
   }
-  return prompts;
+  const input = request.body?.input;
+  if (typeof input === "string") prompt(input);
+  else if (Array.isArray(input)) {
+    for (const item of input) {
+      if (item?.role === "user") prompt(item.content);
+      else if (item?.type === "function_call") {
+        tool({
+          id: item.call_id ?? item.id,
+          name: item.name ?? "tool",
+          arguments: parseArguments(item.arguments),
+        });
+      } else boundary();
+    }
+  }
+  return items;
 }
 
 function buildUserPromptTimeline(
@@ -232,20 +274,27 @@ function buildUserPromptTimeline(
   const seenOccurrences = new Map<string, number>();
   const followUpsByRequest = new Map<string, UserPromptEvent[]>();
   const turnByRequest = new Map<string, number>();
-  let initialPrompt: UserPromptEvent | undefined;
+  const initialHistory: HistoryTimelineItem[] = [];
   let turnCount = 0;
 
   for (const request of requests) {
     const requestOccurrences = new Map<string, number>();
     const followUps: UserPromptEvent[] = [];
-    for (const prompt of requestUserPrompts(request)) {
+    for (const item of requestHistoryItems(request)) {
+      if (item.kind !== "prompt") {
+        if (request === requests[0] && item.kind === "tool")
+          initialHistory.push(item);
+        continue;
+      }
+      const prompt = item.prompt;
       const occurrence = (requestOccurrences.get(prompt) ?? 0) + 1;
       requestOccurrences.set(prompt, occurrence);
       if (occurrence <= (seenOccurrences.get(prompt) ?? 0)) continue;
 
       turnCount += 1;
       const event = { prompt, turn: turnCount };
-      if (!initialPrompt) initialPrompt = event;
+      if (request === requests[0])
+        initialHistory.push({ kind: "prompt", event });
       else followUps.push(event);
       seenOccurrences.set(prompt, occurrence);
     }
@@ -256,10 +305,10 @@ function buildUserPromptTimeline(
   }
 
   return {
-    initialPrompt,
+    initialHistory,
     followUpsByRequest,
     turnByRequest,
-    turnCount: Math.max(turnCount, initialPrompt ? 1 : 0),
+    turnCount,
   };
 }
 
@@ -303,45 +352,10 @@ function responseToolCalls(request: RequestRecord): TimelineToolCall[] {
   return calls;
 }
 
-function requestHistoryToolCalls(request: RequestRecord): TimelineToolCall[] {
-  const calls: TimelineToolCall[] = [];
-  for (const message of request.body?.messages ?? []) {
-    for (const item of message.tool_calls ?? []) {
-      calls.push({
-        id: item?.id ?? item?.call_id,
-        name: item?.function?.name ?? "tool",
-        arguments: parseArguments(item?.function?.arguments),
-      });
-    }
-    if (!Array.isArray(message.content)) continue;
-    for (const item of message.content) {
-      if (item?.type !== "tool_use") continue;
-      calls.push({
-        id: item.id,
-        name: item.name ?? "tool",
-        arguments: item.input,
-      });
-    }
-  }
-
-  const input = request.body?.input;
-  if (Array.isArray(input)) {
-    for (const item of input) {
-      if (item?.type !== "function_call") continue;
-      calls.push({
-        id: item.call_id ?? item.id,
-        name: item.name ?? "tool",
-        arguments: parseArguments(item.arguments),
-      });
-    }
-  }
-  return calls;
-}
-
-function preCapturedToolCalls(requests: RequestRecord[]): TimelineToolCall[] {
-  const firstRequest = requests[0];
-  if (!firstRequest) return [];
-
+function preCapturedHistory(
+  requests: RequestRecord[],
+  history: HistoryTimelineItem[]
+): HistoryTimelineItem[] {
   const responseCallIds = new Set(
     requests
       .flatMap(responseToolCalls)
@@ -349,7 +363,9 @@ function preCapturedToolCalls(requests: RequestRecord[]): TimelineToolCall[] {
       .filter((id): id is string => Boolean(id))
   );
   const seen = new Set<string>();
-  return requestHistoryToolCalls(firstRequest).filter((call) => {
+  return history.filter((item) => {
+    if (item.kind === "prompt") return true;
+    const call = item.call;
     if (!call.id) return true;
     if (responseCallIds.has(call.id) || seen.has(call.id)) return false;
     seen.add(call.id);
@@ -1294,7 +1310,11 @@ function SessionTimeline({
   waterfallRange?: WaterfallRange;
 }) {
   const promptTimeline = buildUserPromptTimeline(detail.requests);
-  const prompt = promptTimeline.initialPrompt?.prompt ?? "";
+  const leadingPrompt =
+    promptTimeline.initialHistory[0]?.kind === "prompt"
+      ? promptTimeline.initialHistory[0].event
+      : undefined;
+  const prompt = leadingPrompt?.prompt ?? "";
   const [promptCopied, setPromptCopied] = useState(false);
   const summary = detail.summary;
   const [collapsedTurnsBySession, setCollapsedTurnsBySession] = useState<
@@ -1306,7 +1326,11 @@ function SessionTimeline({
   const contextMetrics = sessionContextMetrics(summary, detail.requests);
   const results = toolResults(detail.requests);
   const firstRequest = detail.requests[0];
-  const preCapturedTools = preCapturedToolCalls(detail.requests);
+  const history = preCapturedHistory(
+    detail.requests,
+    promptTimeline.initialHistory
+  ).filter((item) => item.kind !== "prompt" || item.event !== leadingPrompt);
+  const preCapturedTools = history.filter((item) => item.kind === "tool");
   const childByTaskCall = new Map(
     (detail.children ?? [])
       .filter((childDetail) => Boolean(childDetail.summary.taskCallId))
@@ -1487,7 +1511,7 @@ function SessionTimeline({
         ) : null}
 
         <div className="relative space-y-1 pl-5 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-gray-200">
-          {firstRequest && preCapturedTools.length > 0 ? (
+          {firstRequest && history.length > 0 ? (
             <div
               data-testid="pre-captured-tool-calls"
               className="relative pb-3"
@@ -1514,30 +1538,46 @@ function SessionTimeline({
                 }
               />
               <div className="space-y-1">
-                {preCapturedTools.map((tool, toolIndex) => (
-                  <TraceGridRow
-                    key={tool.id || `pre-captured-${tool.name}-${toolIndex}`}
-                    left={
-                      <ToolTimelineItem
-                        icon={
-                          tool.name === "task" ? (
-                            <GitBranch className="h-4 w-4" />
-                          ) : (
-                            <Wrench className="h-4 w-4" />
-                          )
+                {history.map((item, itemIndex) => {
+                  if (item.kind === "prompt") {
+                    return (
+                      <TraceGridRow
+                        key={`history-prompt-${itemIndex}`}
+                        left={
+                          <UserPromptTimelineItem
+                            event={item.event}
+                            label={promptLabel}
+                          />
                         }
-                        call={tool}
-                        result={tool.id ? results.get(tool.id) : undefined}
-                        request={firstRequest}
-                        delegatedSession={
-                          tool.id ? childByTaskCall.get(tool.id) : undefined
-                        }
-                        onOpenRequest={onOpenRequest}
-                        waterfallRange={preCapturedRange}
                       />
-                    }
-                  />
-                ))}
+                    );
+                  }
+                  const tool = item.call;
+                  return (
+                    <TraceGridRow
+                      key={tool.id || `pre-captured-${tool.name}-${itemIndex}`}
+                      left={
+                        <ToolTimelineItem
+                          icon={
+                            tool.name === "task" ? (
+                              <GitBranch className="h-4 w-4" />
+                            ) : (
+                              <Wrench className="h-4 w-4" />
+                            )
+                          }
+                          call={tool}
+                          result={tool.id ? results.get(tool.id) : undefined}
+                          request={firstRequest}
+                          delegatedSession={
+                            tool.id ? childByTaskCall.get(tool.id) : undefined
+                          }
+                          onOpenRequest={onOpenRequest}
+                          waterfallRange={preCapturedRange}
+                        />
+                      }
+                    />
+                  );
+                })}
               </div>
             </div>
           ) : null}

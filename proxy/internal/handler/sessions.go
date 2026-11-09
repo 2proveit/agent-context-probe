@@ -157,13 +157,13 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		// Codex agents share Session-Id but have distinct Thread-Id values. Use
 		// the thread as this API's per-agent session identity to avoid merging
 		// parent and child requests (including when affinity is shared).
-		sessionID := firstHeader(request.Headers, "Thread-Id", "X-Session-Affinity", "X-OpenCode-Session", "X-Claude-Code-Session-Id", "Session-Id")
+		sessionID := requestSessionID(request)
 		if sessionID == "" {
 			sessionID = "request:" + request.RequestID
 		}
 		group := groups[sessionID]
 		if group == nil {
-			parentID := firstHeader(request.Headers, "X-Codex-Parent-Thread-Id", "X-Parent-Session-Id")
+			parentID := requestParentSessionID(request)
 			purpose := firstHeader(request.Headers, "X-Lumi-Session-Purpose")
 			group = &sessionGroup{summary: &sessionSummary{
 				SessionID:       sessionID,
@@ -179,7 +179,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		// Earlier captured requests may lack parent metadata. Shared Session-Id
 		// alone cannot identify the direct parent of a nested agent.
 		if group.summary.ParentSessionID == "" {
-			group.summary.ParentSessionID = firstHeader(request.Headers, "X-Codex-Parent-Thread-Id", "X-Parent-Session-Id")
+			group.summary.ParentSessionID = requestParentSessionID(request)
 			group.summary.Kind = sessionKind(group.summary.ParentSessionID)
 		}
 
@@ -505,6 +505,22 @@ func linkTaskInvocations(groups map[string]*sessionGroup, invocations []taskInvo
 			}
 		}
 	}
+}
+
+// Only transport-visible identity participates in grouping. Framework memory,
+// tracing IDs, user IDs, and model names do not establish an agent thread.
+func requestSessionID(request model.RequestLog) string {
+	return firstHeader(request.Headers,
+		"Thread-Id", "X-Thread-Id",
+		"X-Session-Affinity", "X-OpenCode-Session", "X-Claude-Code-Session-Id",
+		"Session-Id", "X-Session-Id", "X-Conversation-Id",
+	)
+}
+
+func requestParentSessionID(request model.RequestLog) string {
+	return firstHeader(request.Headers,
+		"X-Codex-Parent-Thread-Id", "X-Parent-Thread-Id", "X-Parent-Session-Id",
+	)
 }
 
 func firstHeader(headers map[string][]string, names ...string) string {
