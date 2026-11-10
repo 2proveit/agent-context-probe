@@ -28,6 +28,8 @@ import type {
 } from "../types";
 import { normalizeAssistantResponse } from "../utils/assistantResponse";
 import { getUsage } from "../utils/models";
+import { getSystemInstructions } from "../utils/systemInstructions";
+import SystemInstructions from "./SystemInstructions";
 
 interface SessionViewProps {
   sessions: SessionSummary[];
@@ -1326,6 +1328,7 @@ function SessionTimeline({
   const contextMetrics = sessionContextMetrics(summary, detail.requests);
   const results = toolResults(detail.requests);
   const firstRequest = detail.requests[0];
+  const instructionSnapshots = detail.requests.map((request) => getSystemInstructions(request.body));
   const history = preCapturedHistory(
     detail.requests,
     promptTimeline.initialHistory
@@ -1481,6 +1484,11 @@ function SessionTimeline({
       </div>
 
       <div className={child ? "px-5 py-5" : ""}>
+        {instructionSnapshots[0]?.length ? (
+          <div className="mb-4">
+            <SystemInstructions instructions={instructionSnapshots[0]} context="First captured model call" />
+          </div>
+        ) : null}
         {prompt ? (
           <div className="mb-4 rounded-xl border border-gray-200 bg-stone-50 px-4 py-3">
             <div className="mb-1 flex items-center justify-between gap-3">
@@ -1609,6 +1617,8 @@ function SessionTimeline({
               promptTimeline.turnByRequest.get(request.requestId) ?? 1;
             const turnCollapsed = collapsedTurns.has(turn);
             const previousRequest = detail.requests[index - 1];
+            const instructionsChanged = index > 0 &&
+              JSON.stringify(instructionSnapshots[index]) !== JSON.stringify(instructionSnapshots[index - 1]);
             const previousTurn = previousRequest
               ? promptTimeline.turnByRequest.get(previousRequest.requestId)
               : undefined;
@@ -1684,6 +1694,16 @@ function SessionTimeline({
                     />
                   </div>
                 ))}
+                {instructionsChanged ? (
+                  <div className="mb-3">
+                    <SystemInstructions
+                      key={request.requestId}
+                      instructions={instructionSnapshots[index]}
+                      context={`Changed · Step ${index + 1}`}
+                      showEmpty
+                    />
+                  </div>
+                ) : null}
                 {!waterfallRange && beginsTurn && turnTiming ? (
                   <WaterfallAxis
                     range={turnTiming}

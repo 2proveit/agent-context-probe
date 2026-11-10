@@ -19,7 +19,7 @@ export interface RequestRecord {
       tool_call_id?: string;
       name?: string;
     }>;
-    system?: Array<{
+    system?: string | Array<{
       text: string;
       type: string;
       cache_control?: { type: string };

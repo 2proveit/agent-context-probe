@@ -8,3 +8,4 @@ import "./components/SessionView.test";
 import "./components/SessionView.history.test";
 
 import "./components/ToolCard.test";
+import "./components/SystemInstructions.test";
