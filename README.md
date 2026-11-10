@@ -25,6 +25,7 @@ The proxy, management API, health check, and Dashboard share
 - Session and parent/subagent trace views
 - [Agent framework integrations](docs/agent-framework-compatibility.md) for Codex, OpenCode, Claude Code, LangChain/LangGraph, OpenAI Agents SDK, AutoGen, and CrewAI
 - Normalized messages, reasoning, tool calls, tool results, token usage, and latency
+- Grouped namespace tool definitions (including Codex MCP and multi-agent tools) with full parameter schemas
 - Optional Claude Code subagent routing to different upstream models
 - Optional [downstream response fault injection](#downstream-response-fault-injection) for harness testing
 - One executable with an embedded Dashboard; Node.js is not required at runtime
