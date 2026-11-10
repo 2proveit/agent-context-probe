@@ -396,6 +396,18 @@ The container listens on `0.0.0.0`, so the access token is mandatory. Open
 control header described above. SQLite data is stored at
 `/app/data/requests.db` by default.
 
+## Coding agent skill
+
+The reusable [agent-context-probe skill](skills/agent-context-probe/SKILL.md)
+guides coding agents through proxy setup, session identity, API-based evidence
+collection, stream/tool-call diagnosis, and explicitly requested fault tests.
+
+Point an agent at `skills/agent-context-probe/SKILL.md`, or copy the **complete**
+`skills/agent-context-probe/` folder into that agent's supported skill directory.
+A repository-root `skills/` folder is not automatically discovered by every agent.
+For example: “Read `/path/to/agent-context-probe/skills/agent-context-probe/SKILL.md`
+and use it to investigate my captured agent session.”
+
 ## Development
 
 ```bash
