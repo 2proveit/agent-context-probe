@@ -3,7 +3,7 @@ import {
   ChevronDown, 
   Info, 
   Settings, 
-  Cpu, 
+  Cpu,
   MessageCircle, 
   Brain, 
   User, 
@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { MessageContent } from './MessageContent';
 import ToolCard from './ToolCard';
+import SystemInstructions from './SystemInstructions';
+import { getSystemInstructions } from '../utils/systemInstructions';
 import { formatJSON, formatJSONForCopy, limitDisplayText, normalizeDisplayLimit } from '../utils/formatters';
 import {
   getAPIProtocol,
@@ -88,6 +90,7 @@ export default function RequestDetailContent({ request }: RequestDetailContentPr
 
   const protocol = getAPIProtocol(request.endpoint);
   const conversationItems = normalizeRequestMessages(request.body);
+  const systemInstructions = getSystemInstructions(request.body);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({
@@ -207,48 +210,7 @@ export default function RequestDetailContent({ request }: RequestDetailContentPr
       {request.body && (
         <>
           {/* System Messages */}
-          {(request.body.system || request.body.instructions) && (
-            <div className={DETAIL_SECTION_CLASS}>
-              <div 
-                className={DETAIL_SECTION_HEADER_CLASS}
-                onClick={() => toggleSection('system')}
-              >
-                <div className="flex items-center justify-between">
-                  <h4 className={DETAIL_SECTION_TITLE_CLASS}>
-                    <DetailSectionIcon name="system" className="border-amber-100 bg-amber-50 text-amber-600">
-                      <Cpu className={DETAIL_SECTION_ICON_CLASS} />
-                    </DetailSectionIcon>
-                    <span>System Instructions</span>
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                      {request.body.system?.length || 1} items
-                    </span>
-                  </h4>
-                  <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
-                    expandedSections.system ? 'rotate-180' : ''
-                  }`} />
-                </div>
-              </div>
-              {expandedSections.system && (
-                <div className="space-y-3 p-4">
-                  {(request.body.system || [{ text: request.body.instructions, type: 'instructions' }]).map((sys: any, index: number) => (
-                    <div key={index} className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-800">System Message #{index + 1}</span>
-                        {sys.cache_control && (
-                          <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full border border-orange-200">
-                            Cache: {sys.cache_control.type}
-                          </span>
-                        )}
-                      </div>
-                      <div className="bg-white rounded p-3 border border-gray-200">
-                        <MessageContent content={{ type: 'text', text: sys.text }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <SystemInstructions instructions={systemInstructions} />
 
           {/* Tools */}
           {request.body.tools && request.body.tools.length > 0 && (
