@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Context Probe"
+  short_description: "Inspect agent sessions and model HTTP traces"
+  default_prompt: "Use $agent-context-probe to connect my coding agent to the proxy and diagnose its captured model requests."
