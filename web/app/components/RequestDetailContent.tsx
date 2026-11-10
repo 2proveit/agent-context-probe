@@ -20,6 +20,7 @@ import {
   Wrench
 } from 'lucide-react';
 import { MessageContent } from './MessageContent';
+import ToolCard from './ToolCard';
 import { formatJSON, formatJSONForCopy, limitDisplayText, normalizeDisplayLimit } from '../utils/formatters';
 import {
   getAPIProtocol,
@@ -263,7 +264,7 @@ export default function RequestDetailContent({ request }: RequestDetailContentPr
                     </DetailSectionIcon>
                     <span>Available Tools</span>
                     <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600">
-                      {request.body.tools.length} tools
+                      {request.body.tools.length} definitions
                     </span>
                   </h4>
                   <ChevronDown className={`${DETAIL_SECTION_CHEVRON_CLASS} ${
@@ -1180,113 +1181,6 @@ function SemanticResponse({ body, endpoint }: { body: any; endpoint: string }) {
           <MessageContent content={item.content} />
         </div>
       ))}
-    </div>
-  );
-}
-
-// Tool Card Component
-function ToolCard({ tool, index }: { tool: any; index: number }) {
-  const [expanded, setExpanded] = useState(false);
-  const [copiedSchema, setCopiedSchema] = useState(false);
-  const toolName = tool.name || tool.function?.name || tool.type || 'Unknown Tool';
-  const description = tool.description || tool.function?.description || '';
-  const schema = tool.input_schema || tool.parameters || tool.function?.parameters;
-
-  const handleCopySchema = async () => {
-    try {
-      await navigator.clipboard.writeText(formatJSON(schema));
-      setCopiedSchema(true);
-      setTimeout(() => setCopiedSchema(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy schema:', error);
-    }
-  };
-
-  // Parse description to identify code blocks and format them
-  const formatDescription = (description: string) => {
-    // Split by code blocks (text between backticks)
-    const parts = description.split(/(`[^`]+`)/g);
-    
-    return parts.map((part, i) => {
-      if (part.startsWith('`') && part.endsWith('`')) {
-        // Code inline
-        const code = part.slice(1, -1);
-        return (
-          <code key={i} className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">
-            {code}
-          </code>
-        );
-      }
-      
-      // Return non-code parts as plain text
-      return <span key={i}>{part}</span>;
-    });
-  };
-
-  const isLongDescription = description.length > 300;
-  const displayDescription = expanded ? description : description.slice(0, 300);
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50/60">
-      <div className="p-4">
-        <div className="mb-3 flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white">
-              <Wrench className="h-4 w-4 text-gray-500" />
-            </div>
-            <div>
-              <h5 className="text-sm font-semibold text-gray-900">{toolName}</h5>
-              <span className="text-xs text-gray-500">Tool #{index + 1}</span>
-            </div>
-          </div>
-        </div>
-        
-        <div className="prose prose-sm max-w-none">
-          <div className="text-sm text-gray-700 leading-relaxed space-y-2">
-            <div className="whitespace-pre-wrap">
-              {formatDescription(displayDescription)}
-              {isLongDescription && !expanded && '...'}
-            </div>
-            {isLongDescription && (
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className="text-blue-600 hover:text-blue-700 text-xs font-medium mt-2"
-              >
-                {expanded ? 'Show less' : 'Show more'}
-              </button>
-            )}
-          </div>
-        </div>
-        
-        {schema && (
-          <div className="mt-4">
-            <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-              <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2">
-                <span className="text-xs font-semibold text-gray-700 flex items-center space-x-2">
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>Input Schema</span>
-                </span>
-                <button
-                  onClick={handleCopySchema}
-                  className="p-1 text-gray-500 hover:text-gray-700 transition-colors"
-                  title="Copy schema"
-                >
-                  {copiedSchema ? (
-                    <Check className="w-3.5 h-3.5 text-green-600" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </div>
-              <div className="p-3">
-                <pre className="text-xs text-gray-700 overflow-x-auto font-mono">
-                  {formatJSON(schema)}
-                </pre>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
