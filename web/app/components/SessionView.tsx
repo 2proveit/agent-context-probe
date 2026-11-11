@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- OpenAI and Anthropic response blocks are runtime JSON. */
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   AlertCircle,
   Bot,
@@ -782,7 +782,7 @@ function WaterfallAxis({
 
   return (
     <TraceGridRow
-      className={`${collapsed ? "mb-1 pb-1" : "mb-3 pb-2"} border-b border-gray-100`}
+      className={`${collapsed ? "mb-1 pb-1" : "sticky top-0 z-[35] mb-3 bg-white pb-2 pt-1"} border-b border-gray-100`}
       left={
         <div
           data-turn-waterfall-axis={turn}
@@ -793,7 +793,15 @@ function WaterfallAxis({
             data-turn-toggle={turn}
             aria-expanded={!collapsed}
             aria-label={`${collapsed ? "Expand" : "Collapse"} Turn ${turn}`}
-            onClick={onToggle}
+            onClick={({ currentTarget }) => {
+              onToggle();
+              if (!collapsed) {
+                // A pinned toggle can move out of view when its steps disappear.
+                requestAnimationFrame(() =>
+                  currentTarget.scrollIntoView({ block: "nearest" })
+                );
+              }
+            }}
             className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 font-medium uppercase tracking-wide text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
           >
             {collapsed ? (
@@ -1359,10 +1367,12 @@ function SessionTimeline({
     ...[...timingMetrics.turns.values()].map((turn) => turn.durationMs),
     1
   );
-  const turnStepCounts = new Map<number, number>();
-  for (const request of detail.requests) {
+  const turnSteps = new Map<number, { startIndex: number; count: number }>();
+  for (const [index, request] of detail.requests.entries()) {
     const turn = promptTimeline.turnByRequest.get(request.requestId) ?? 1;
-    turnStepCounts.set(turn, (turnStepCounts.get(turn) ?? 0) + 1);
+    const steps = turnSteps.get(turn);
+    if (steps) steps.count += 1;
+    else turnSteps.set(turn, { startIndex: index, count: 1 });
   }
   const windowsByRequest = new Map(
     (detail.toolWindows ?? []).map((window) => [window.requestId, window])
@@ -1589,347 +1599,344 @@ function SessionTimeline({
               </div>
             </div>
           ) : null}
-          {detail.requests.map((rawRequest, index) => {
-            const request = {
-              ...rawRequest,
-              id: rawRequest.id || rawRequest.requestId,
-            };
-            const response = normalizeAssistantResponse(
-              request.response?.body,
-              request.endpoint
-            );
-            const text = response.output;
-            const reasoning = response.reasoning;
-            const tools = responseToolCalls(request);
-            const usage = getUsage(request.response?.body);
-            const toolWindow =
-              windowsByRequest.get(request.requestId) ??
-              (tools.length
-                ? {
-                    requestId: request.requestId,
-                    toolNames: tools.map((tool) => tool.name),
-                    durationMs: 0,
-                    approximate: true,
-                    complete: false,
-                  }
-                : undefined);
-            const turn =
-              promptTimeline.turnByRequest.get(request.requestId) ?? 1;
+          {[...turnSteps].map(([turn, { startIndex, count }]) => {
             const turnCollapsed = collapsedTurns.has(turn);
-            const previousRequest = detail.requests[index - 1];
-            const instructionsChanged = index > 0 &&
-              JSON.stringify(instructionSnapshots[index]) !== JSON.stringify(instructionSnapshots[index - 1]);
-            const previousTurn = previousRequest
-              ? promptTimeline.turnByRequest.get(previousRequest.requestId)
-              : undefined;
-            const beginsTurn = index === 0 || previousTurn !== turn;
             const turnTiming = timingMetrics.turns.get(turn);
-            const requestStartMs = Date.parse(request.timestamp);
-            const requestRange = waterfallRange ??
-              turnTiming ?? {
-                startMs: Number.isFinite(requestStartMs) ? requestStartMs : 0,
-                durationMs: Math.max(
-                  request.response?.responseTime ?? summary.elapsedTimeMs,
-                  1
-                ),
-              };
-            if (turnCollapsed && !beginsTurn) return null;
-            const nextRequest = detail.requests[index + 1];
-            const nextTurn = nextRequest
-              ? promptTimeline.turnByRequest.get(nextRequest.requestId)
-              : undefined;
-            const isTurnOutput =
-              Boolean(text) &&
-              tools.length === 0 &&
-              !request.response?.streamError &&
-              (nextTurn === undefined || nextTurn !== turn);
-            const outputLabel = isTurnOutput
-              ? turn === promptTimeline.turnCount
-                ? "Final Output"
-                : `Turn ${turn} Output`
-              : "";
-            const stepLabel = `Step ${index + 1}${outputLabel ? ` · ${outputLabel}` : ""} · Model: ${request.routedModel || request.body?.model || "Unknown"}`;
-            const promptEvents =
-              promptTimeline.followUpsByRequest.get(request.requestId) ?? [];
-            const delegatedSpans = tools
-              .map((tool) =>
-                tool.id ? childByTaskCall.get(tool.id) : undefined
-              )
-              .filter((delegated): delegated is SessionDetail =>
-                Boolean(delegated)
-              );
+            const requests = detail.requests.slice(
+              startIndex,
+              startIndex + (turnCollapsed ? 1 : count)
+            );
             return (
-              <div
-                key={request.requestId}
-                className={turnCollapsed ? "" : "pb-3"}
-              >
-                {!waterfallRange &&
-                beginsTurn &&
-                turnTiming &&
-                turnTiming.userWaitBeforeMs > 0 ? (
-                  <div className="relative pb-3">
-                    <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-400 ring-1 ring-gray-200" />
-                    <TraceGridRow
-                      left={
-                        <UserWaitTimelineItem
-                          durationMs={turnTiming.userWaitBeforeMs}
-                        />
-                      }
-                    />
-                  </div>
-                ) : null}
-                {promptEvents.map((event) => (
-                  <div
-                    key={`${request.requestId}:prompt:${event.turn}`}
-                    className="relative pb-3"
-                  >
-                    <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-500 ring-1 ring-blue-200" />
-                    <TraceGridRow
-                      left={
-                        <UserPromptTimelineItem
-                          event={event}
-                          label={promptLabel}
-                        />
-                      }
-                    />
-                  </div>
-                ))}
-                {instructionsChanged ? (
-                  <div className="mb-3">
-                    <SystemInstructions
-                      key={request.requestId}
-                      instructions={instructionSnapshots[index]}
-                      context={`Changed · Step ${index + 1}`}
-                      showEmpty
-                    />
-                  </div>
-                ) : null}
-                {!waterfallRange && beginsTurn && turnTiming ? (
-                  <WaterfallAxis
-                    range={turnTiming}
-                    turn={turn}
-                    stepCount={turnStepCounts.get(turn) ?? 0}
-                    maxTurnDurationMs={maxTurnDurationMs}
-                    collapsed={turnCollapsed}
-                    onToggle={() => toggleTurn(turn)}
-                  />
-                ) : null}
-                <div
-                  data-turn-content={turn}
-                  className={turnCollapsed ? "hidden" : "relative"}
-                >
-                  <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-300 ring-1 ring-gray-200" />
-                  <TraceGridRow
-                    className="mb-1.5"
-                    left={
-                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-[11px] tracking-wide text-gray-400">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span>{stepLabel}</span>
-                          {longestMeasured?.kind === "model" &&
-                          longestMeasured.id === request.requestId ? (
-                            <span className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
-                              Longest measured span
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="flex flex-wrap items-center justify-end gap-3">
-                          {usage ? (
-                            <span>
-                              {formatCompactNumber(usage.output)} output tokens
-                            </span>
-                          ) : null}
-                          {request.response?.responseTime !== undefined ? (
-                            <span>
-                              {formatDuration(request.response.responseTime)}{" "}
-                              model latency
-                            </span>
-                          ) : null}
-                          <span>
-                            {new Date(request.timestamp).toLocaleTimeString()}
-                          </span>
-                        </span>
-                      </div>
-                    }
-                    right={
-                      request.response?.responseTime !== undefined ? (
-                        <WaterfallBar
-                          range={requestRange}
-                          startTimestamp={request.timestamp}
-                          durationMs={request.response.responseTime}
-                          kind="model"
-                          approximate={
-                            !timestampHasSubsecondPrecision(request.timestamp)
-                          }
-                          label={stepLabel}
-                        />
-                      ) : null
-                    }
-                  />
-                </div>
-                <div
-                  data-turn-content={turn}
-                  className={turnCollapsed ? "hidden" : "space-y-1"}
-                >
-                  {reasoning ? (
-                    <TraceGridRow
-                      left={
-                        <AssistantTimelineItem
-                          kind="reasoning"
-                          text={reasoning}
-                          request={request}
-                          tokenCount={response.reasoningTokens}
-                        />
-                      }
-                    />
-                  ) : null}
-                  {text ? (
-                    <TraceGridRow
-                      left={
-                        <AssistantTimelineItem
-                          kind="output"
-                          text={text}
-                          request={request}
-                          tokenCount={response.contentTokens}
-                        />
-                      }
-                    />
-                  ) : null}
-                  {toolWindow ? (
-                    <TraceGridRow
-                      left={
-                        <div
-                          data-tool-window-request-id={request.requestId}
-                          className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs"
-                          title="Inferred from model response completion to the next LLM request containing all matching tool results"
-                        >
-                          <Wrench className="h-3.5 w-3.5 text-amber-700" />
-                          <span className="font-medium text-gray-800">
-                            {tools.length === 1
-                              ? `Tool: ${tools[0].name}`
-                              : `Tool batch · ${tools.map((tool) => tool.name).join(", ")}`}
-                          </span>
-                          <span className="text-gray-500">
-                            {formatObservedDuration(toolWindow)}
-                          </span>
-                          {longestToolWindow?.requestId ===
-                          request.requestId ? (
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
-                              Longest observed tool window
-                            </span>
-                          ) : null}
-                        </div>
-                      }
-                      right={
-                        toolWindow.complete ? (
-                          <WaterfallBar
-                            range={requestRange}
-                            startTimestamp={toolWindow.startTimestamp}
-                            durationMs={toolWindow.durationMs}
-                            kind="tool"
-                            approximate={toolWindow.approximate}
-                            label={`${tools.length === 1 ? `Tool: ${tools[0].name}` : "Tool batch"} · ${formatObservedDuration(toolWindow)}`}
+              <div key={turn}>
+                {requests.map((rawRequest, stepIndex) => {
+                  const index = startIndex + stepIndex;
+                  const beginsTurn = stepIndex === 0;
+                  const request = {
+                    ...rawRequest,
+                    id: rawRequest.id || rawRequest.requestId,
+                  };
+                  const response = normalizeAssistantResponse(
+                    request.response?.body,
+                    request.endpoint
+                  );
+                  const text = response.output;
+                  const reasoning = response.reasoning;
+                  const tools = responseToolCalls(request);
+                  const usage = getUsage(request.response?.body);
+                  const toolWindow =
+                    windowsByRequest.get(request.requestId) ??
+                    (tools.length
+                      ? {
+                          requestId: request.requestId,
+                          toolNames: tools.map((tool) => tool.name),
+                          durationMs: 0,
+                          approximate: true,
+                          complete: false,
+                        }
+                      : undefined);
+                  const instructionsChanged = index > 0 &&
+                    JSON.stringify(instructionSnapshots[index]) !== JSON.stringify(instructionSnapshots[index - 1]);
+                  const requestStartMs = Date.parse(request.timestamp);
+                  const requestRange = waterfallRange ??
+                    turnTiming ?? {
+                      startMs: Number.isFinite(requestStartMs) ? requestStartMs : 0,
+                      durationMs: Math.max(
+                        request.response?.responseTime ?? summary.elapsedTimeMs,
+                        1
+                      ),
+                    };
+                  const isTurnOutput =
+                    Boolean(text) &&
+                    tools.length === 0 &&
+                    !request.response?.streamError &&
+                    stepIndex === count - 1;
+                  const outputLabel = isTurnOutput
+                    ? turn === promptTimeline.turnCount
+                      ? "Final Output"
+                      : `Turn ${turn} Output`
+                    : "";
+                  const stepLabel = `Step ${index + 1}${outputLabel ? ` · ${outputLabel}` : ""} · Model: ${request.routedModel || request.body?.model || "Unknown"}`;
+                  const promptEvents =
+                    promptTimeline.followUpsByRequest.get(request.requestId) ?? [];
+                  const delegatedSpans = tools
+                    .map((tool) =>
+                      tool.id ? childByTaskCall.get(tool.id) : undefined
+                    )
+                    .filter((delegated): delegated is SessionDetail =>
+                      Boolean(delegated)
+                    );
+                  return (
+                    <Fragment key={request.requestId}>
+                      {!waterfallRange &&
+                      beginsTurn &&
+                      turnTiming &&
+                      turnTiming.userWaitBeforeMs > 0 ? (
+                        <div className="relative pb-3">
+                          <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-400 ring-1 ring-gray-200" />
+                          <TraceGridRow
+                            left={
+                              <UserWaitTimelineItem
+                                durationMs={turnTiming.userWaitBeforeMs}
+                              />
+                            }
                           />
-                        ) : (
-                          <div className="pt-2 text-center text-[11px] text-gray-400">
-                            Timing unavailable
-                          </div>
-                        )
-                      }
-                    />
-                  ) : null}
-                  {delegatedSpans.map((delegated) => (
-                    <TraceGridRow
-                      key={`subagent-span-${delegated.summary.sessionId}`}
-                      left={
-                        <div className="ml-5 flex min-h-8 flex-wrap items-center gap-2 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-1.5 text-xs text-gray-600">
-                          <GitBranch className="h-3.5 w-3.5 text-violet-600" />
-                          <span className="font-medium text-gray-800">
-                            Subagent:{" "}
-                            {delegated.summary.agentName ||
-                              delegated.summary.title}
-                          </span>
-                          <span>
-                            {formatDuration(delegated.summary.elapsedTimeMs)}{" "}
-                            measured E2E
-                          </span>
-                          {longestMeasured?.kind === "subagent" &&
-                          longestMeasured.id === delegated.summary.sessionId ? (
-                            <span className="rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-700">
-                              Longest measured span
-                            </span>
-                          ) : null}
                         </div>
-                      }
-                      right={
-                        <WaterfallBar
-                          range={requestRange}
-                          startTimestamp={delegated.summary.firstTimestamp}
-                          durationMs={delegated.summary.elapsedTimeMs}
-                          kind="subagent"
-                          approximate={
-                            !timestampHasSubsecondPrecision(
-                              delegated.summary.firstTimestamp
-                            )
+                      ) : null}
+                      {promptEvents.map((event) => (
+                        <div
+                          key={`${request.requestId}:prompt:${event.turn}`}
+                          className="relative pb-3"
+                        >
+                          <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-500 ring-1 ring-blue-200" />
+                          <TraceGridRow
+                            left={
+                              <UserPromptTimelineItem
+                                event={event}
+                                label={promptLabel}
+                              />
+                            }
+                          />
+                        </div>
+                      ))}
+                      {instructionsChanged ? (
+                        <div className="mb-3">
+                          <SystemInstructions
+                            key={request.requestId}
+                            instructions={instructionSnapshots[index]}
+                            context={`Changed · Step ${index + 1}`}
+                            showEmpty
+                          />
+                        </div>
+                      ) : null}
+                      {!waterfallRange && beginsTurn && turnTiming ? (
+                        <WaterfallAxis
+                          range={turnTiming}
+                          turn={turn}
+                          stepCount={count}
+                          maxTurnDurationMs={maxTurnDurationMs}
+                          collapsed={turnCollapsed}
+                          onToggle={() => toggleTurn(turn)}
+                        />
+                      ) : null}
+                      <div
+                        data-turn-content={turn}
+                        className={turnCollapsed ? "hidden" : "relative"}
+                      >
+                        <div className="absolute -left-5 top-3 h-3.5 w-3.5 rounded-full border-2 border-white bg-gray-300 ring-1 ring-gray-200" />
+                        <TraceGridRow
+                          className="mb-1.5"
+                          left={
+                            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 text-[11px] tracking-wide text-gray-400">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span>{stepLabel}</span>
+                                {longestMeasured?.kind === "model" &&
+                                longestMeasured.id === request.requestId ? (
+                                  <span className="rounded-full bg-blue-50 px-2 py-0.5 font-medium text-blue-700">
+                                    Longest measured span
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="flex flex-wrap items-center justify-end gap-3">
+                                {usage ? (
+                                  <span>
+                                    {formatCompactNumber(usage.output)} output tokens
+                                  </span>
+                                ) : null}
+                                {request.response?.responseTime !== undefined ? (
+                                  <span>
+                                    {formatDuration(request.response.responseTime)}{" "}
+                                    model latency
+                                  </span>
+                                ) : null}
+                                <span>
+                                  {new Date(request.timestamp).toLocaleTimeString()}
+                                </span>
+                              </span>
+                            </div>
                           }
-                          label={`Subagent: ${delegated.summary.agentName || delegated.summary.title} · ${formatDuration(delegated.summary.elapsedTimeMs)} measured E2E`}
-                        />
-                      }
-                    />
-                  ))}
-                  {tools.map((tool, toolIndex) => (
-                    <TraceGridRow
-                      key={tool.id || `${tool.name}-${toolIndex}`}
-                      left={
-                        <ToolTimelineItem
-                          icon={
-                            tool.name === "task" ? (
-                              <GitBranch className="h-4 w-4" />
-                            ) : (
-                              <Wrench className="h-4 w-4" />
-                            )
+                          right={
+                            request.response?.responseTime !== undefined ? (
+                              <WaterfallBar
+                                range={requestRange}
+                                startTimestamp={request.timestamp}
+                                durationMs={request.response.responseTime}
+                                kind="model"
+                                approximate={
+                                  !timestampHasSubsecondPrecision(request.timestamp)
+                                }
+                                label={stepLabel}
+                              />
+                            ) : null
                           }
-                          call={tool}
-                          result={tool.id ? results.get(tool.id) : undefined}
-                          request={request}
-                          delegatedSession={
-                            tool.id ? childByTaskCall.get(tool.id) : undefined
-                          }
-                          onOpenRequest={onOpenRequest}
-                          waterfallRange={requestRange}
                         />
-                      }
-                    />
-                  ))}
-                  {request.response?.streamError ? (
-                    <TraceGridRow
-                      left={
-                        <TimelineItem
-                          icon={<XCircle className="h-4 w-4 text-red-500" />}
-                          title="Response interrupted"
-                          description={request.response.streamError}
-                          request={request}
-                          onOpenRequest={onOpenRequest}
-                          tone="error"
-                        />
-                      }
-                    />
-                  ) : null}
-                  {!reasoning &&
-                  !text &&
-                  tools.length === 0 &&
-                  !request.response?.streamError ? (
-                    <TraceGridRow
-                      left={
-                        <TimelineItem
-                          icon={<CheckCircle2 className="h-4 w-4" />}
-                          title="Response captured"
-                          request={request}
-                          onOpenRequest={onOpenRequest}
-                        />
-                      }
-                    />
-                  ) : null}
-                </div>
+                      </div>
+                      <div
+                        data-turn-content={turn}
+                        className={turnCollapsed ? "hidden" : "space-y-1 pb-3"}
+                      >
+                        {reasoning ? (
+                          <TraceGridRow
+                            left={
+                              <AssistantTimelineItem
+                                kind="reasoning"
+                                text={reasoning}
+                                request={request}
+                                tokenCount={response.reasoningTokens}
+                              />
+                            }
+                          />
+                        ) : null}
+                        {text ? (
+                          <TraceGridRow
+                            left={
+                              <AssistantTimelineItem
+                                kind="output"
+                                text={text}
+                                request={request}
+                                tokenCount={response.contentTokens}
+                              />
+                            }
+                          />
+                        ) : null}
+                        {toolWindow ? (
+                          <TraceGridRow
+                            left={
+                              <div
+                                data-tool-window-request-id={request.requestId}
+                                className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs"
+                                title="Inferred from model response completion to the next LLM request containing all matching tool results"
+                              >
+                                <Wrench className="h-3.5 w-3.5 text-amber-700" />
+                                <span className="font-medium text-gray-800">
+                                  {tools.length === 1
+                                    ? `Tool: ${tools[0].name}`
+                                    : `Tool batch · ${tools.map((tool) => tool.name).join(", ")}`}
+                                </span>
+                                <span className="text-gray-500">
+                                  {formatObservedDuration(toolWindow)}
+                                </span>
+                                {longestToolWindow?.requestId ===
+                                request.requestId ? (
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+                                    Longest observed tool window
+                                  </span>
+                                ) : null}
+                              </div>
+                            }
+                            right={
+                              toolWindow.complete ? (
+                                <WaterfallBar
+                                  range={requestRange}
+                                  startTimestamp={toolWindow.startTimestamp}
+                                  durationMs={toolWindow.durationMs}
+                                  kind="tool"
+                                  approximate={toolWindow.approximate}
+                                  label={`${tools.length === 1 ? `Tool: ${tools[0].name}` : "Tool batch"} · ${formatObservedDuration(toolWindow)}`}
+                                />
+                              ) : (
+                                <div className="pt-2 text-center text-[11px] text-gray-400">
+                                  Timing unavailable
+                                </div>
+                              )
+                            }
+                          />
+                        ) : null}
+                        {delegatedSpans.map((delegated) => (
+                          <TraceGridRow
+                            key={`subagent-span-${delegated.summary.sessionId}`}
+                            left={
+                              <div className="ml-5 flex min-h-8 flex-wrap items-center gap-2 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-1.5 text-xs text-gray-600">
+                                <GitBranch className="h-3.5 w-3.5 text-violet-600" />
+                                <span className="font-medium text-gray-800">
+                                  Subagent:{" "}
+                                  {delegated.summary.agentName ||
+                                    delegated.summary.title}
+                                </span>
+                                <span>
+                                  {formatDuration(delegated.summary.elapsedTimeMs)}{" "}
+                                  measured E2E
+                                </span>
+                                {longestMeasured?.kind === "subagent" &&
+                                longestMeasured.id === delegated.summary.sessionId ? (
+                                  <span className="rounded-full bg-violet-100 px-2 py-0.5 font-medium text-violet-700">
+                                    Longest measured span
+                                  </span>
+                                ) : null}
+                              </div>
+                            }
+                            right={
+                              <WaterfallBar
+                                range={requestRange}
+                                startTimestamp={delegated.summary.firstTimestamp}
+                                durationMs={delegated.summary.elapsedTimeMs}
+                                kind="subagent"
+                                approximate={
+                                  !timestampHasSubsecondPrecision(
+                                    delegated.summary.firstTimestamp
+                                  )
+                                }
+                                label={`Subagent: ${delegated.summary.agentName || delegated.summary.title} · ${formatDuration(delegated.summary.elapsedTimeMs)} measured E2E`}
+                              />
+                            }
+                          />
+                        ))}
+                        {tools.map((tool, toolIndex) => (
+                          <TraceGridRow
+                            key={tool.id || `${tool.name}-${toolIndex}`}
+                            left={
+                              <ToolTimelineItem
+                                icon={
+                                  tool.name === "task" ? (
+                                    <GitBranch className="h-4 w-4" />
+                                  ) : (
+                                    <Wrench className="h-4 w-4" />
+                                  )
+                                }
+                                call={tool}
+                                result={tool.id ? results.get(tool.id) : undefined}
+                                request={request}
+                                delegatedSession={
+                                  tool.id ? childByTaskCall.get(tool.id) : undefined
+                                }
+                                onOpenRequest={onOpenRequest}
+                                waterfallRange={requestRange}
+                              />
+                            }
+                          />
+                        ))}
+                        {request.response?.streamError ? (
+                          <TraceGridRow
+                            left={
+                              <TimelineItem
+                                icon={<XCircle className="h-4 w-4 text-red-500" />}
+                                title="Response interrupted"
+                                description={request.response.streamError}
+                                request={request}
+                                onOpenRequest={onOpenRequest}
+                                tone="error"
+                              />
+                            }
+                          />
+                        ) : null}
+                        {!reasoning &&
+                        !text &&
+                        tools.length === 0 &&
+                        !request.response?.streamError ? (
+                          <TraceGridRow
+                            left={
+                              <TimelineItem
+                                icon={<CheckCircle2 className="h-4 w-4" />}
+                                title="Response captured"
+                                request={request}
+                                onOpenRequest={onOpenRequest}
+                              />
+                            }
+                          />
+                        ) : null}
+                      </div>
+                    </Fragment>
+                  );
+                })}
               </div>
             );
           })}
@@ -2032,8 +2039,8 @@ export default function SessionView({
               <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Loading session…
             </div>
           ) : detail ? (
-            <div className="max-h-[720px] overflow-y-auto scrollbar-custom lg:h-full lg:max-h-none">
-              <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-6 py-5 backdrop-blur">
+            <div className="flex max-h-[720px] flex-col lg:h-full lg:max-h-none">
+              <header className="shrink-0 border-b border-gray-200 bg-white px-6 py-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <h1 className="truncate text-xl font-semibold text-gray-900">
@@ -2056,11 +2063,13 @@ export default function SessionView({
                   </div>
                 </div>
               </header>
-              <div className="space-y-6 px-6 py-6">
-                <SessionTimeline
-                  detail={detail}
-                  onOpenRequest={onOpenRequest}
-                />
+              <div className="isolate min-h-0 flex-1 overflow-y-auto scrollbar-custom">
+                <div className="px-6 py-6">
+                  <SessionTimeline
+                    detail={detail}
+                    onOpenRequest={onOpenRequest}
+                  />
+                </div>
               </div>
             </div>
           ) : (
