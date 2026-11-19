@@ -127,6 +127,20 @@ type AnthropicSystemMessage struct {
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
+type AnthropicSystemPrompt []AnthropicSystemMessage
+
+func (prompt *AnthropicSystemPrompt) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*prompt = AnthropicSystemPrompt{{Type: "text", Text: text}}
+		return nil
+	}
+	return json.Unmarshal(data, (*[]AnthropicSystemMessage)(prompt))
+}
+
 type CacheControl struct {
 	Type string `json:"type"`
 }
@@ -144,14 +158,14 @@ type InputSchema struct {
 }
 
 type AnthropicRequest struct {
-	Model       string                   `json:"model"`
-	Messages    []AnthropicMessage       `json:"messages"`
-	MaxTokens   int                      `json:"max_tokens"`
-	Temperature *float64                 `json:"temperature,omitempty"`
-	System      []AnthropicSystemMessage `json:"system,omitempty"`
-	Stream      bool                     `json:"stream,omitempty"`
-	Tools       []Tool                   `json:"tools,omitempty"`
-	ToolChoice  interface{}              `json:"tool_choice,omitempty"`
+	Model       string                `json:"model"`
+	Messages    []AnthropicMessage    `json:"messages"`
+	MaxTokens   int                   `json:"max_tokens"`
+	Temperature *float64              `json:"temperature,omitempty"`
+	System      AnthropicSystemPrompt `json:"system,omitempty"`
+	Stream      bool                  `json:"stream,omitempty"`
+	Tools       []Tool                `json:"tools,omitempty"`
+	ToolChoice  interface{}           `json:"tool_choice,omitempty"`
 }
 
 type ModelsResponse struct {

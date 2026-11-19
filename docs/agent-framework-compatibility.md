@@ -66,6 +66,8 @@ sends its native session header to the configured gateway for calls associated
 with a session. No custom identity header is needed in that case. Direct calls
 without a session ID and requests from adapters that omit any recognized
 identity header remain separate. The Harness user ID is not a session key.
+The Messages endpoint accepts the adapter's string-form `system` prompt as
+well as an array of text blocks.
 
 Unless an explicit parent header is present, ACP uses
 `dsh_session_log.session.parentSession` when the version-1 extension marks
