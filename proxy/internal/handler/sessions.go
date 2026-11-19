@@ -72,6 +72,11 @@ type taskInvocation struct {
 	taskID          string
 }
 
+const (
+	deepSeekHarnessSessionHeader    = "X-DeepSeek-Harness-Session-Id"
+	deepSeekHarnessParentCaptureKey = "dshParentSessionId"
+)
+
 // GetSessions returns session summaries, or one full session tree when the
 // session query parameter is present. Grouping is performed before pagination
 // so a long session is never split across request pages.
@@ -163,23 +168,20 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		}
 		group := groups[sessionID]
 		if group == nil {
-			parentID := requestParentSessionID(request)
 			purpose := firstHeader(request.Headers, "X-Lumi-Session-Purpose")
 			group = &sessionGroup{summary: &sessionSummary{
-				SessionID:       sessionID,
-				ParentSessionID: parentID,
-				Purpose:         purpose,
-				Kind:            sessionKind(parentID),
-				Status:          "captured",
-				FirstTimestamp:  request.Timestamp,
-				LastTimestamp:   request.Timestamp,
+				SessionID:      sessionID,
+				Purpose:        purpose,
+				Status:         "captured",
+				FirstTimestamp: request.Timestamp,
+				LastTimestamp:  request.Timestamp,
 			}}
 			groups[sessionID] = group
 		}
 		// Earlier captured requests may lack parent metadata. Shared Session-Id
 		// alone cannot identify the direct parent of a nested agent.
 		if group.summary.ParentSessionID == "" {
-			group.summary.ParentSessionID = requestParentSessionID(request)
+			group.summary.ParentSessionID = requestParentSessionID(request, sessionID)
 			group.summary.Kind = sessionKind(group.summary.ParentSessionID)
 		}
 
@@ -206,6 +208,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		group.summary.ToolCallCount += len(preCapturedToolCalls(group.requests))
 	}
 
+	discardSessionParentCycles(groups)
 	invocations := collectTaskInvocations(groups)
 	linkTaskInvocations(groups, invocations)
 	for _, group := range groups {
@@ -217,7 +220,7 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 	var roots []*sessionSummary
 	for _, group := range groups {
 		parent := groups[group.summary.ParentSessionID]
-		if parent == nil || group.summary.ParentSessionID == group.summary.SessionID {
+		if parent == nil {
 			roots = append(roots, group.summary)
 			continue
 		}
@@ -233,6 +236,30 @@ func buildSessionGroups(requests []model.RequestLog) ([]*sessionSummary, map[str
 		return compareTimestamps(roots[i].LastTimestamp, roots[j].LastTimestamp) > 0
 	})
 	return roots, groups
+}
+
+func discardSessionParentCycles(groups map[string]*sessionGroup) {
+	visitedFrom := make(map[string]string, len(groups))
+	for startID := range groups {
+		for sessionID := startID; groups[sessionID] != nil; sessionID = groups[sessionID].summary.ParentSessionID {
+			if from, seen := visitedFrom[sessionID]; seen {
+				if from == startID {
+					for cycleID := sessionID; ; {
+						summary := groups[cycleID].summary
+						nextID := summary.ParentSessionID
+						summary.ParentSessionID = ""
+						summary.Kind = sessionKind("")
+						if nextID == sessionID {
+							break
+						}
+						cycleID = nextID
+					}
+				}
+				break
+			}
+			visitedFrom[sessionID] = startID
+		}
+	}
 }
 
 func observeRequestWindow(group *sessionGroup, request model.RequestLog) {
@@ -512,15 +539,52 @@ func linkTaskInvocations(groups map[string]*sessionGroup, invocations []taskInvo
 func requestSessionID(request model.RequestLog) string {
 	return firstHeader(request.Headers,
 		"Thread-Id", "X-Thread-Id",
+		deepSeekHarnessSessionHeader,
 		"X-Session-Affinity", "X-OpenCode-Session", "X-Claude-Code-Session-Id",
 		"Session-Id", "X-Session-Id", "X-Conversation-Id",
 	)
 }
 
-func requestParentSessionID(request model.RequestLog) string {
-	return firstHeader(request.Headers,
+func requestParentSessionID(request model.RequestLog, sessionID string) string {
+	if parentID := firstHeader(request.Headers,
 		"X-Codex-Parent-Thread-Id", "X-Parent-Thread-Id", "X-Parent-Session-Id",
-	)
+	); parentID != "" {
+		return parentID
+	}
+	if request.Endpoint != "/v1/messages" || firstHeader(request.Headers, deepSeekHarnessSessionHeader) != sessionID {
+		return ""
+	}
+	captured := objectValue(objectValue(request.Body)["_capture"])
+	return stringValue(captured[deepSeekHarnessParentCaptureKey])
+}
+
+func captureMessagesBody(request model.AnthropicRequest, body []byte, headers http.Header) interface{} {
+	sessionID := firstHeader(headers, deepSeekHarnessSessionHeader)
+	if sessionID == "" {
+		return request
+	}
+	var wire struct {
+		SessionLog struct {
+			Version int
+			Session struct {
+				ID            string
+				Origin        string
+				ParentSession string
+			}
+		} `json:"dsh_session_log"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil || wire.SessionLog.Version != 1 {
+		return request
+	}
+	session := wire.SessionLog.Session
+	parentID := strings.TrimSpace(session.ParentSession)
+	if session.ID != sessionID || session.Origin != "subagent" || parentID == "" || parentID == sessionID {
+		return request
+	}
+	return struct {
+		model.AnthropicRequest
+		Capture map[string]string `json:"_capture"`
+	}{request, map[string]string{deepSeekHarnessParentCaptureKey: parentID}}
 }
 
 func firstHeader(headers map[string][]string, names ...string) string {
