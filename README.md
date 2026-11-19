@@ -98,7 +98,7 @@ Release archives contain the executable, configuration example, README,
 LICENSE, and install/uninstall scripts. On macOS and Linux:
 
 ```bash
-./scripts/install.sh --version 0.1.0-beta.1
+./scripts/install.sh --version 0.1.0-beta.4
 export PATH="$HOME/.local/bin:$PATH" # if the installer reports it is missing
 agent-context-probe version
 ```
@@ -106,7 +106,7 @@ agent-context-probe version
 On Windows:
 
 ```powershell
-.\scripts\install.ps1 -Version 0.1.0-beta.1
+.\scripts\install.ps1 -Version 0.1.0-beta.4
 agent-context-probe.exe version
 ```
 
