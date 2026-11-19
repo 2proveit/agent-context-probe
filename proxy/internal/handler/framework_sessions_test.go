@@ -160,7 +160,7 @@ func TestDeepSeekHarnessSubagentCapture(t *testing.T) {
 			{"cycle-second", "cycle-second", "cycle-first", "subagent"},
 		}
 		for _, call := range calls {
-			body := fmt.Sprintf(`{"model":%q,"stream":true,"max_tokens":10,"messages":[]`, fixture.model)
+			body := fmt.Sprintf(`{"model":%q,"stream":true,"max_tokens":10,"system":"Harness instructions","messages":[]`, fixture.model)
 			if call.logSessionID != "" {
 				body += fmt.Sprintf(`,"dsh_session_log":{
 					"version":1,"sessionFormatVersion":2,
@@ -224,6 +224,10 @@ func TestDeepSeekHarnessSubagentCapture(t *testing.T) {
 		grandchild := child.Children[0]
 		if grandchild.Summary.SessionID != "grandchild" || grandchild.Summary.ParentSessionID != "child" || grandchild.Summary.Kind != "subagent" || len(grandchild.Requests) != 1 {
 			t.Fatalf("unexpected grandchild: %+v", grandchild.Summary)
+		}
+		system := arrayValue(objectValue(child.Requests[0].Body)["system"])
+		if len(system) != 1 || objectValue(system[0])["text"] != "Harness instructions" {
+			t.Fatalf("string system prompt was lost in capture: %v", system)
 		}
 		if body := recorder.Body.String(); strings.Contains(body, "/private/example") || strings.Contains(body, "turn/start") {
 			t.Fatal("capture retained unrelated DeepSeek Harness session log data")
