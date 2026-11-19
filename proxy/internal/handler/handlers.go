@@ -336,7 +336,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		Method:        r.Method,
 		Endpoint:      r.URL.Path,
 		Headers:       CaptureHeaders(r.Header),
-		Body:          req,
+		Body:          captureMessagesBody(req, bodyBytes, r.Header),
 		Model:         decision.OriginalModel,
 		OriginalModel: decision.OriginalModel,
 		RoutedModel:   decision.TargetModel,

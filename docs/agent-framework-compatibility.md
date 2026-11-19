@@ -11,6 +11,7 @@ OpenAI Responses (`/v1/responses`), with JSON and SSE responses.
 | Client / framework | Model protocol covered | Session integration |
 | --- | --- | --- |
 | Codex CLI / TypeScript SDK | Responses | Uses native `Thread-Id`; `X-Codex-Parent-Thread-Id` links children. Shared `Session-Id` must not merge agents. |
+| DeepSeek Harness (`dsh`) | Messages with the official DeepSeek adapter | Uses native `X-DeepSeek-Harness-Session-Id` and links subagents when `dsh_session_log` carries their lineage. |
 | OpenCode | Chat Completions or Messages, according to provider | Recognizes `X-OpenCode-Session` and existing affinity headers when supplied. |
 | Claude Code / Claude Agent SDK | Messages | Recognizes `X-Claude-Code-Session-Id` when supplied; custom headers can supply an explicit identity. |
 | LangChain / LangGraph with ChatOpenAI | Chat Completions or Responses | Set model client `default_headers`; LangGraph checkpoint `configurable.thread_id` alone is not a proxy integration. |
@@ -37,12 +38,13 @@ skipped):
 
 1. `Thread-Id`
 2. `X-Thread-Id`
-3. `X-Session-Affinity`
-4. `X-OpenCode-Session`
-5. `X-Claude-Code-Session-Id`
-6. `Session-Id`
-7. `X-Session-Id`
-8. `X-Conversation-Id`
+3. `X-DeepSeek-Harness-Session-Id`
+4. `X-Session-Affinity`
+5. `X-OpenCode-Session`
+6. `X-Claude-Code-Session-Id`
+7. `Session-Id`
+8. `X-Session-Id`
+9. `X-Conversation-Id`
 
 Parent headers, in priority order: `X-Codex-Parent-Thread-Id`,
 `X-Parent-Thread-Id`, `X-Parent-Session-Id`. Their values must match the parent's
@@ -56,6 +58,24 @@ are not read from prompts or arbitrary body metadata. Requests with no recognize
 transport header remain separate as `request:<requestId>` instead of being
 silently merged. For concurrency, use per-client or per-request headers; do not
 mutate a shared global header dictionary while other runs are executing.
+
+### DeepSeek Harness
+
+The [official DeepSeek adapter](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/deepseek-llm-api-wire-extensions.md)
+sends its native session header to the configured gateway for calls associated
+with a session. No custom identity header is needed in that case. Direct calls
+without a session ID and requests from adapters that omit any recognized
+identity header remain separate. The Harness user ID is not a session key.
+
+Unless an explicit parent header is present, ACP uses
+`dsh_session_log.session.parentSession` when the version-1 extension marks
+the session as a `subagent` and its ID matches the selected native session ID.
+This also supports nested subagents. Ordinary forks do not count as subagents.
+If the log upload is disabled or the parent was not captured, ACP displays the
+session separately unless another capture supplies the missing information.
+ACP stores only the derived parent ID from the extension. Older Messages
+captures did not retain this metadata; a fresh capture with lineage is needed
+to link those sessions.
 
 ### Common Python setup
 

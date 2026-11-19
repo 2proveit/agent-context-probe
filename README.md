@@ -42,13 +42,19 @@ to its direct parent, including nested subagents. Child threads without a
 `task` tool-call association are displayed separately within the parent trace.
 
 Identity headers are matched case-insensitively, using the first non-empty value
-in this order: `Thread-Id`, `X-Thread-Id`, `X-Session-Affinity`,
-`X-OpenCode-Session`, `X-Claude-Code-Session-Id`, `Session-Id`, `X-Session-Id`,
-then `X-Conversation-Id`. Without any identity header, each
+in this order: `Thread-Id`, `X-Thread-Id`, `X-DeepSeek-Harness-Session-Id`,
+`X-Session-Affinity`, `X-OpenCode-Session`, `X-Claude-Code-Session-Id`, `Session-Id`,
+`X-Session-Id`, then `X-Conversation-Id`. Without any identity header, each
 request remains separate. Shared `Session-Id` alone does not establish a direct
 parent relationship; threads whose parent is absent from the captured history
 are shown as roots. Existing stored headers are used when loading session views,
 so previously captured requests benefit without a database migration.
+
+DeepSeek Harness (`dsh`) requests are grouped by the native
+`X-DeepSeek-Harness-Session-Id` header. When a Messages request carries
+matching `dsh_session_log` subagent metadata, its session appears under the
+direct parent. ACP retains only the parent ID from that extension, not the log.
+The Harness user ID identifies an installation, not a conversation.
 
 History reconstructed from the first captured request preserves the original
 order of user prompts and tool calls. Consecutive user messages, such as Codex
